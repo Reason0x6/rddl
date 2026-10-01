@@ -55,6 +55,8 @@ http://SERVER-IP:8080
 
 The `/api/discover-season` endpoint returns the two top candidates per episode.
 The `/api/discover-movie` endpoint returns ranked movie candidates.
+The Catalog page lists movies and TV shows found on disk, including seasons and
+episode counts.
 The Requests page searches Cinemeta/IMDb titles and stores requests in SQLite
 under `/data/requests.sqlite3`.
 The `/api/download-batches` endpoint starts selected downloads asynchronously;

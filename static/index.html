@@ -13,6 +13,9 @@
 .episode,.movie{grid-template-columns:48px minmax(0,1fr);align-items:start}.episode-main,.movie-main{min-width:0}.choice-list{display:grid;gap:8px;margin-top:12px}.choice-row{display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px;align-items:center;padding:10px 12px;border:1px solid var(--line);border-radius:11px;background:#fbfcfa}.choice-row:has(input:checked){border-color:#79b497;background:#f3faf5}.choice-select{display:flex;align-items:center;gap:7px;color:#45534b;font-size:12px;font-weight:700;white-space:nowrap}.choice-select input{width:17px;height:17px;margin:0;accent-color:var(--green)}.choice-copy{min-width:0}.choice-copy .release{margin:0}.choice-copy .episode-meta,.choice-copy .movie-meta{margin-top:5px}.selection-bar{position:fixed;z-index:4;left:50%;bottom:18px;display:flex;align-items:center;gap:16px;width:min(700px,calc(100% - 28px));padding:13px 15px;transform:translateX(-50%);border:1px solid #dbe5dc;border-radius:15px;background:#fffffff2;box-shadow:0 12px 40px #10211730;backdrop-filter:blur(12px)}.selection-info{flex:1;min-width:0}.selection-title{font-weight:750}.selection-detail{color:var(--muted);font-size:12px}.selection-actions{display:flex;gap:8px}.selection-bar .button.small{white-space:nowrap}@media(max-width:650px){.episode,.movie{grid-template-columns:42px minmax(0,1fr);gap:10px;padding:12px}.episode-number,.movie-number{width:38px;height:38px}.selection-bar{bottom:10px;gap:8px;padding:10px}.selection-bar .button.small{padding:0 9px;font-size:12px}.selection-detail{max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
 .page-tabs{width:100%;align-items:center}.page-tabs .tab:last-child{margin-left:auto}.request-fields{display:grid;grid-template-columns:150px minmax(0,1fr) 130px auto;gap:12px;align-items:end}.request-fields input,.request-fields select{display:block;width:100%;height:46px;margin-top:7px;padding:0 12px;border:1px solid #d8dfd9;border-radius:10px;background:white;color:var(--ink);font:inherit}.request-list,.title-results{display:grid;gap:10px;margin-top:14px}.request-item,.title-result{display:flex;align-items:center;gap:14px;padding:14px;border:1px solid var(--line);border-radius:14px;background:var(--paper)}.title-result img{width:55px;height:78px;border-radius:7px;object-fit:cover;background:#eef2ee}.title-result-copy,.request-copy{flex:1;min-width:0}.request-copy strong,.title-result-copy strong{display:block;overflow-wrap:anywhere}.request-copy p,.title-result-copy p{margin:3px 0 0;color:var(--muted);font-size:13px}.request-copy .button{display:flex;width:max-content;margin-top:10px}.request-state{min-width:112px;padding:4px 9px;border-radius:99px;background:#eef2ee;color:#526158;font-size:12px;font-weight:700;text-align:center;text-transform:capitalize}.request-state.completed{background:var(--green-pale);color:var(--green-dark)}.request-state.declined{background:#fdecea;color:#a3342b}.request-state.downloading{background:var(--amber-pale);color:var(--amber)}.status-control{font-size:11px;color:var(--muted)}.status-control select{display:block;margin-top:3px;padding:5px 7px;border:1px solid var(--line);border-radius:8px;background:white;color:var(--ink);font:inherit}@media(max-width:650px){.request-fields{grid-template-columns:1fr 1fr}.request-fields label:nth-child(2){grid-column:1/-1}.request-fields .button{grid-column:1/-1;width:100%}.request-item,.title-result{align-items:flex-start;flex-wrap:wrap}.request-state{margin-left:auto}}
 </style>
+<style>
+.catalog-summary{display:flex;flex-wrap:wrap;gap:10px}.catalog-stat{padding:9px 13px;border:1px solid var(--line);border-radius:11px;background:var(--paper);color:var(--muted);font-size:13px}.catalog-stat strong{margin-right:4px;color:var(--ink);font-size:16px}.catalog-list{display:grid;gap:10px}.catalog-item{padding:15px 17px;border:1px solid var(--line);border-radius:14px;background:var(--paper)}.catalog-item>strong{display:block;overflow-wrap:anywhere}.catalog-item p{margin:4px 0 0;color:var(--muted);font-size:12px;overflow-wrap:anywhere}.catalog-seasons{display:flex;flex-wrap:wrap;gap:7px;margin-top:9px}@media(max-width:650px){.page-tabs .tab{min-width:0;flex:1;padding:8px 7px;font-size:12px}.page-tabs .tab:last-child{margin-left:0}}
+</style>
 </head>
 <body>
 <main class="shell">
@@ -22,6 +25,7 @@
   <nav class="tabs page-tabs" aria-label="Pages" id="page-tabs">
     <button class="tab active" id="download-page-tab" type="button" aria-selected="true">Downloader</button>
     <button class="tab" id="request-page-tab" type="button" aria-selected="false">Requests</button>
+    <button class="tab" id="catalog-page-tab" type="button" aria-selected="false">Catalog</button>
     <button class="tab" id="logout-button" type="button">Sign out</button>
   </nav>
 
@@ -67,6 +71,15 @@
     <div class="request-list" id="request-list"></div>
   </section>
 
+  <section class="catalog-page" id="catalog-panel" hidden>
+    <div class="section-head"><div><h2>Your library</h2><p>Movies, TV shows, and downloaded seasons currently in Media.</p></div><button class="button secondary small" id="refresh-catalog" type="button">Refresh</button></div>
+    <div class="catalog-summary" id="catalog-summary"></div>
+    <div class="section-head"><div><h2>Movies</h2></div></div>
+    <div class="catalog-list" id="catalog-movies"></div>
+    <div class="section-head"><div><h2>TV shows</h2></div></div>
+    <div class="catalog-list" id="catalog-shows"></div>
+  </section>
+
   <div class="status" id="status" role="status" aria-live="polite"></div>
   <section id="results" hidden>
     <div class="section-head"><div><h2 id="result-heading">Results</h2><p id="result-subtitle"></p></div><div style="display:flex;align-items:center;gap:12px"><button class="button secondary small" id="select-top-seeds" type="button" hidden>Select all top seeds</button><div class="count" id="result-count"></div></div></div>
@@ -100,25 +113,32 @@ document.getElementById('send-selected').addEventListener('click', sendSelected)
 document.getElementById('select-top-seeds').addEventListener('click', selectTopSeeds);
 document.getElementById('download-page-tab').addEventListener('click', () => showPage('downloads'));
 document.getElementById('request-page-tab').addEventListener('click', () => showPage('requests'));
+document.getElementById('catalog-page-tab').addEventListener('click', () => showPage('catalog'));
 document.getElementById('logout-button').addEventListener('click', signOut);
 document.getElementById('request-search-form').addEventListener('submit', event => { event.preventDefault(); searchRequestTitles(); });
 document.getElementById('request-media-type').addEventListener('change', updateRequestFields);
 document.getElementById('refresh-requests').addEventListener('click', loadRequests);
+document.getElementById('refresh-catalog').addEventListener('click', loadCatalog);
 
 function showPage(page) {
   const requests = page === 'requests';
-  document.getElementById('download-page-tab').classList.toggle('active', !requests);
+  const catalog = page === 'catalog';
   document.getElementById('request-page-tab').classList.toggle('active', requests);
-  document.getElementById('download-page-tab').setAttribute('aria-selected', String(!requests));
+  document.getElementById('catalog-page-tab').classList.toggle('active', catalog);
+  document.getElementById('download-page-tab').classList.toggle('active', !requests && !catalog);
+  document.getElementById('download-page-tab').setAttribute('aria-selected', String(!requests && !catalog));
   document.getElementById('request-page-tab').setAttribute('aria-selected', String(requests));
-  document.getElementById('media-tabs').hidden = requests;
+  document.getElementById('catalog-page-tab').setAttribute('aria-selected', String(catalog));
+  document.getElementById('media-tabs').hidden = requests || catalog;
   const showTv = document.getElementById('tv-tab').classList.contains('active');
-  document.getElementById('tv-panel').hidden = requests || !showTv;
-  document.getElementById('movie-panel').hidden = requests || showTv;
-  document.getElementById('results').hidden = requests || !episodeResults.length && !movieResults.length;
+  document.getElementById('tv-panel').hidden = requests || catalog || !showTv;
+  document.getElementById('movie-panel').hidden = requests || catalog || showTv;
+  document.getElementById('results').hidden = requests || catalog || !episodeResults.length && !movieResults.length;
   document.getElementById('request-panel').hidden = !requests;
-  document.getElementById('selection-bar').hidden = requests || selected.size === 0 && !currentJob;
+  document.getElementById('catalog-panel').hidden = !catalog;
+  document.getElementById('selection-bar').hidden = requests || catalog || selected.size === 0 && !currentJob;
   if (requests) loadRequests();
+  if (catalog) loadCatalog();
   setStatus('');
 }
 
@@ -266,6 +286,26 @@ async function loadRequests() {
     renderRequests(data.requests || []);
   } catch (error) {
     list.innerHTML = `<div class="empty"><strong>Could not load requests</strong>${escapeHtml(error.message || '')}</div>`;
+  }
+}
+
+async function loadCatalog() {
+  const movieList = document.getElementById('catalog-movies');
+  const showList = document.getElementById('catalog-shows');
+  try {
+    const response = await fetch('/api/catalog');
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || 'Could not load the media catalog.');
+    document.getElementById('catalog-summary').innerHTML = `<span class="catalog-stat"><strong>${data.movie_count}</strong> movies</span><span class="catalog-stat"><strong>${data.show_count}</strong> shows</span><span class="catalog-stat"><strong>${data.episode_count}</strong> episodes</span>`;
+    movieList.innerHTML = data.movies.length
+      ? data.movies.map(movie => `<article class="catalog-item"><strong>${escapeHtml(movie.title)}${movie.year ? ` (${escapeHtml(movie.year)})` : ''}</strong><p>${escapeHtml(movie.file)}</p></article>`).join('')
+      : '<div class="empty"><strong>No movies found</strong>Movies in the library will appear here.</div>';
+    showList.innerHTML = data.shows.length
+      ? data.shows.map(show => `<article class="catalog-item"><strong>${escapeHtml(show.title)}</strong><div class="catalog-seasons">${show.seasons.map(season => `<span class="badge neutral">${escapeHtml(season.name)} · ${season.episodes} ${season.episodes === 1 ? 'episode' : 'episodes'}</span>`).join('')}</div></article>`).join('')
+      : '<div class="empty"><strong>No TV shows found</strong>Shows and seasons in the library will appear here.</div>';
+  } catch (error) {
+    movieList.innerHTML = `<div class="empty"><strong>Could not load catalog</strong>${escapeHtml(error.message || '')}</div>`;
+    showList.replaceChildren();
   }
 }
 

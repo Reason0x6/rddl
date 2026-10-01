@@ -197,7 +197,7 @@ async def require_login(request: Request, call_next):
         return JSONResponse({"detail": "Login required"}, status_code=401)
     requestor_routes = {
         "/api/session", "/api/logout", "/api/title-search", "/api/requests",
-        "/api/discover", "/api/discover-season", "/api/discover-movie",
+        "/api/discover", "/api/discover-season", "/api/discover-movie", "/api/catalog",
     }
     if username and request.state.role == "requestor" and request.url.path.startswith("/api/"):
         allowed = request.url.path in requestor_routes
@@ -588,6 +588,65 @@ async def health():
         "ok": True,
         "download_root": str(ROOT),
         "torrentio_configured": bool(TORRENTIO_URL),
+    }
+
+
+def media_video_files(directory: Path) -> list[Path]:
+    if not directory.is_dir():
+        return []
+    return sorted(
+        (path for path in directory.rglob("*")
+         if path.is_file() and path.suffix.lower() in VIDEO_EXTENSIONS),
+        key=lambda path: str(path).casefold(),
+    )
+
+
+@app.get("/api/catalog")
+async def media_catalog():
+    movies = []
+    movie_roots = [ROOT / "Movies", ROOT / "movies"]
+    seen_movies = set()
+    for movie_root in movie_roots:
+        for path in media_video_files(movie_root):
+            if path in seen_movies:
+                continue
+            seen_movies.add(path)
+            label = re.sub(r"[._]+", " ", path.stem).strip()
+            year_match = re.search(r"\b(?:19|20)\d{2}\b", label)
+            year = year_match.group(0) if year_match else None
+            title = label[:year_match.start()].strip(" -._()[]") if year_match else label
+            movies.append({
+                "title": title or label,
+                "year": year,
+                "file": path.name,
+            })
+
+    shows = []
+    tv_root = ROOT / "TV"
+    if tv_root.is_dir():
+        for show_dir in sorted((p for p in tv_root.iterdir() if p.is_dir()),
+                               key=lambda path: path.name.casefold()):
+            seasons = []
+            for season_dir in sorted((p for p in show_dir.iterdir() if p.is_dir()),
+                                     key=lambda path: path.name.casefold()):
+                episode_count = len(media_video_files(season_dir))
+                if episode_count:
+                    seasons.append({"name": season_dir.name, "episodes": episode_count})
+            unsorted_count = sum(
+                1 for path in show_dir.iterdir()
+                if path.is_file() and path.suffix.lower() in VIDEO_EXTENSIONS
+            )
+            if unsorted_count:
+                seasons.append({"name": "Unsorted", "episodes": unsorted_count})
+            if seasons:
+                shows.append({"title": show_dir.name, "seasons": seasons})
+
+    return {
+        "movies": movies,
+        "movie_count": len(movies),
+        "shows": shows,
+        "show_count": len(shows),
+        "episode_count": sum(season["episodes"] for show in shows for season in show["seasons"]),
     }
 
 
