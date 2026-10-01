@@ -16,6 +16,10 @@ TOKEN = os.environ.get("REAL_DEBRID_TOKEN")
 ROOT = Path(os.environ.get("DOWNLOAD_ROOT", "/media"))
 POLL = int(os.environ.get("POLL_SECONDS", "10"))
 TORRENTIO_URL = os.environ.get("TORRENTIO_URL", "").rstrip("/")
+VIDEO_EXTENSIONS = {
+    ".mkv", ".mp4", ".m4v", ".avi", ".mov", ".wmv", ".mpg", ".mpeg",
+    ".m2ts", ".ts", ".webm", ".vob", ".ogv", ".3gp", ".flv", ".divx",
+}
 
 app = FastAPI(title="RD Media Downloader", version="2.0.0")
 logging.basicConfig(
@@ -367,7 +371,27 @@ async def download(req: DownloadRequest):
         if not info or not info.get("files"):
             raise HTTPException(504, "Real-Debrid did not expose torrent files")
 
-        file_ids = ",".join(str(f["id"]) for f in info["files"])
+        # Real-Debrid exposes torrent contents as individual files. Select only
+        # playable video files so archives, samples, subtitles, and metadata
+        # are never downloaded to the library.
+        video_files = [
+            f for f in info["files"]
+            if Path(str(f.get("path", ""))).suffix.lower() in VIDEO_EXTENSIONS
+        ]
+        if not video_files:
+            logger.warning(
+                "torrent has no supported video files torrent_id=%s files=%s",
+                torrent_id,
+                [f.get("path") for f in info["files"]],
+            )
+            raise HTTPException(
+                422,
+                "This release has no standalone video files (it may contain only a RAR/ZIP archive). Choose another release.",
+            )
+
+        file_ids = ",".join(str(f["id"]) for f in video_files)
+        logger.info("selecting video files torrent_id=%s count=%s",
+                    torrent_id, len(video_files))
         await rd_post(client, f"/torrents/selectFiles/{torrent_id}",
                       {"files": file_ids})
 
@@ -411,7 +435,13 @@ async def download(req: DownloadRequest):
             if not direct:
                 continue
 
-            filename = safe_name(payload.get("filename") or "download.bin")
+            raw_filename = payload.get("filename") or "download.bin"
+            if Path(raw_filename).suffix.lower() not in VIDEO_EXTENSIONS:
+                logger.warning("skipping non-video RD link torrent_id=%s filename=%r",
+                               torrent_id, raw_filename)
+                continue
+
+            filename = safe_name(raw_filename)
             target = target_dir / filename
 
             if target.exists():
