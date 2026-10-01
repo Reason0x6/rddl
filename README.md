@@ -14,7 +14,7 @@ asynchronous batch.
 ## Layout
 
 - `/media/TV/<show>/S<season>`
-- `/media/movies`
+- `/media/Movies`
 
 ## Configure
 
@@ -60,7 +60,7 @@ under `/data/requests.sqlite3`.
 The `/api/download-batches` endpoint starts selected downloads asynchronously;
 poll `/api/download-batches/{job_id}` for progress. Up to three downloads run
 concurrently. TV files are stored in a show folder and an `S01`-style season
-folder. Movie files are stored directly in `/media/movies`.
+folder. Movie files are stored directly in `/media/Movies`.
 
 Download progress is also written to the container logs:
 

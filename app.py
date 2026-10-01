@@ -884,7 +884,7 @@ async def download_locked(req: DownloadRequest, info_hash: str | None):
         if not links:
             raise HTTPException(502, "Completed torrent returned no links")
 
-        destination_root = ROOT / ("TV" if req.media_type == "tv" else "movies")
+        destination_root = ROOT / ("TV" if req.media_type == "tv" else "Movies")
         if req.media_type == "tv":
             if req.season is None:
                 raise HTTPException(422, "Season is required for TV downloads")
