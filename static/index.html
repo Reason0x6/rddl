@@ -26,7 +26,9 @@
 .catalog-table th{color:var(--muted);background:#f8faf7;font-size:11px;letter-spacing:.05em;text-transform:uppercase;white-space:nowrap}
 .catalog-table tr:last-child td{border-bottom:0}.catalog-table td strong{overflow-wrap:anywhere}.catalog-file{max-width:280px;overflow-wrap:anywhere;color:var(--muted)}.catalog-no-results{padding:24px!important;color:var(--muted);text-align:center}
 .download-progress{grid-column:1/-1;display:flex;align-items:center;gap:10px;color:var(--muted);font-size:11px}.download-progress progress{width:min(360px,100%);height:8px;accent-color:var(--green)}.download-item-warning{grid-column:1/-1;color:var(--amber);font-size:12px;overflow-wrap:anywhere}
+.account-create{display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:end}.account-create .help{grid-column:1/-1;margin-top:0}.account-list{display:grid;gap:10px;margin-top:14px}.account-item{display:grid;grid-template-columns:minmax(120px,1fr) minmax(220px,1.5fr) auto;align-items:end;gap:12px;padding:14px;border:1px solid var(--line);border-radius:14px;background:var(--paper)}.account-identity{display:flex;align-items:center;flex-wrap:wrap;gap:8px;min-height:40px}.account-password-form{display:flex;align-items:end;gap:8px}.account-password-form label{flex:1;min-width:0}.account-password-form input{height:38px}.button.danger{background:#a3342b}.button.danger:hover{background:#852a23}
 @media(max-width:650px){.catalog-table{min-width:660px}}
+@media(max-width:650px){.account-create{grid-template-columns:1fr}.account-create .help{grid-column:auto}.account-item{grid-template-columns:1fr}.account-password-form{align-items:end}.account-password-form .button{white-space:nowrap}}
 </style>
 </head>
 <body>
@@ -39,6 +41,7 @@
     <button class="tab" id="request-page-tab" type="button" aria-selected="false">Requests</button>
     <button class="tab" id="catalog-page-tab" type="button" aria-selected="false">Catalog</button>
     <button class="tab" id="downloads-page-tab" type="button" aria-selected="false" hidden>Downloads</button>
+    <button class="tab" id="accounts-page-tab" type="button" aria-selected="false" hidden>Accounts</button>
     <button class="tab" id="logout-button" type="button">Sign out</button>
   </nav>
 
@@ -96,6 +99,17 @@
     <div class="download-job-list" id="download-job-list"></div>
   </section>
 
+  <section class="accounts-page" id="accounts-panel" hidden>
+    <div class="section-head"><div><h2>Requestor accounts</h2><p>Create accounts, reset passwords, or remove access.</p></div><button class="button secondary small" id="refresh-accounts" type="button">Refresh</button></div>
+    <form class="search-card account-create" id="account-create-form">
+      <label>Username<input id="account-username" autocomplete="off" minlength="3" maxlength="64" pattern="[A-Za-z0-9_.-]+" required></label>
+      <label>Password<input id="account-password" type="password" autocomplete="new-password" minlength="8" maxlength="200" required></label>
+      <button class="button" type="submit">Create requestor</button>
+      <p class="help">Usernames can use letters, numbers, periods, underscores, and hyphens. Passwords must be at least 8 characters.</p>
+    </form>
+    <div class="account-list" id="account-list"></div>
+  </section>
+
   <div class="status" id="status" role="status" aria-live="polite"></div>
   <section id="results" hidden>
     <div class="library-notice" id="library-notice" hidden></div>
@@ -135,6 +149,7 @@ document.getElementById('download-page-tab').addEventListener('click', () => sho
 document.getElementById('request-page-tab').addEventListener('click', () => showPage('requests'));
 document.getElementById('catalog-page-tab').addEventListener('click', () => showPage('catalog'));
 document.getElementById('downloads-page-tab').addEventListener('click', () => showPage('download-history'));
+document.getElementById('accounts-page-tab').addEventListener('click', () => showPage('accounts'));
 document.getElementById('logout-button').addEventListener('click', signOut);
 document.getElementById('request-search-form').addEventListener('submit', event => { event.preventDefault(); searchRequestTitles(); });
 document.getElementById('request-media-type').addEventListener('change', updateRequestFields);
@@ -142,31 +157,38 @@ document.getElementById('refresh-requests').addEventListener('click', loadReques
 document.getElementById('refresh-catalog').addEventListener('click', loadCatalog);
 document.getElementById('catalog-search').addEventListener('input', renderCatalogTable);
 document.getElementById('refresh-downloads').addEventListener('click', loadDownloadHistory);
+document.getElementById('refresh-accounts').addEventListener('click', loadAccounts);
+document.getElementById('account-create-form').addEventListener('submit', createAccount);
 
 function showPage(page) {
   const requests = page === 'requests';
   const catalog = page === 'catalog';
   const downloadHistory = page === 'download-history';
+  const accounts = page === 'accounts';
   document.getElementById('request-page-tab').classList.toggle('active', requests);
   document.getElementById('catalog-page-tab').classList.toggle('active', catalog);
   document.getElementById('downloads-page-tab').classList.toggle('active', downloadHistory);
-  document.getElementById('download-page-tab').classList.toggle('active', !requests && !catalog && !downloadHistory);
-  document.getElementById('download-page-tab').setAttribute('aria-selected', String(!requests && !catalog && !downloadHistory));
+  document.getElementById('accounts-page-tab').classList.toggle('active', accounts);
+  document.getElementById('download-page-tab').classList.toggle('active', !requests && !catalog && !downloadHistory && !accounts);
+  document.getElementById('download-page-tab').setAttribute('aria-selected', String(!requests && !catalog && !downloadHistory && !accounts));
   document.getElementById('request-page-tab').setAttribute('aria-selected', String(requests));
   document.getElementById('catalog-page-tab').setAttribute('aria-selected', String(catalog));
   document.getElementById('downloads-page-tab').setAttribute('aria-selected', String(downloadHistory));
-  document.getElementById('media-tabs').hidden = requests || catalog || downloadHistory;
+  document.getElementById('accounts-page-tab').setAttribute('aria-selected', String(accounts));
+  document.getElementById('media-tabs').hidden = requests || catalog || downloadHistory || accounts;
   const showTv = document.getElementById('tv-tab').classList.contains('active');
-  document.getElementById('tv-panel').hidden = requests || catalog || downloadHistory || !showTv;
-  document.getElementById('movie-panel').hidden = requests || catalog || downloadHistory || showTv;
-  document.getElementById('results').hidden = requests || catalog || downloadHistory || !episodeResults.length && !movieResults.length;
+  document.getElementById('tv-panel').hidden = requests || catalog || downloadHistory || accounts || !showTv;
+  document.getElementById('movie-panel').hidden = requests || catalog || downloadHistory || accounts || showTv;
+  document.getElementById('results').hidden = requests || catalog || downloadHistory || accounts || !episodeResults.length && !movieResults.length;
   document.getElementById('request-panel').hidden = !requests;
   document.getElementById('catalog-panel').hidden = !catalog;
   document.getElementById('downloads-panel').hidden = !downloadHistory;
-  document.getElementById('selection-bar').hidden = requests || catalog || downloadHistory || selected.size === 0 && !currentJob;
+  document.getElementById('accounts-panel').hidden = !accounts;
+  document.getElementById('selection-bar').hidden = requests || catalog || downloadHistory || accounts || selected.size === 0 && !currentJob;
   if (requests) loadRequests();
   if (catalog) loadCatalog();
   if (downloadHistory) loadDownloadHistory();
+  if (accounts) loadAccounts();
   setStatus('');
 }
 
@@ -321,6 +343,65 @@ async function loadRequests() {
   } catch (error) {
     list.innerHTML = `<div class="empty"><strong>Could not load requests</strong>${escapeHtml(error.message || '')}</div>`;
   }
+}
+
+async function loadAccounts() {
+  const list = document.getElementById('account-list');
+  try {
+    const response = await fetch('/api/accounts');
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || 'Could not load requestor accounts.');
+    if (!data.accounts.length) {
+      list.innerHTML = '<div class="empty"><strong>No requestor accounts</strong>Create an account above to give someone request access.</div>';
+      return;
+    }
+    list.innerHTML = data.accounts.map(account => `<article class="account-item"><div class="account-identity"><strong>${escapeHtml(account.username)}</strong><span class="badge neutral">Requestor</span></div><form class="account-password-form" data-account-password="${escapeHtml(account.username)}"><label>New password<input type="password" name="password" autocomplete="new-password" minlength="8" maxlength="200" required></label><button class="button secondary small" type="submit">Reset password</button></form><button class="button danger small" type="button" data-delete-account="${escapeHtml(account.username)}">Delete</button></article>`).join('');
+    list.querySelectorAll('[data-account-password]').forEach(form => form.addEventListener('submit', event => resetAccountPassword(event, form)));
+    list.querySelectorAll('[data-delete-account]').forEach(button => button.addEventListener('click', () => deleteAccount(button.dataset.deleteAccount)));
+  } catch (error) {
+    list.innerHTML = `<div class="empty"><strong>Could not load accounts</strong>${escapeHtml(error.message || '')}</div>`;
+  }
+}
+
+async function createAccount(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const username = document.getElementById('account-username').value.trim();
+  const password = document.getElementById('account-password').value;
+  try {
+    const response = await fetch('/api/accounts', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password})});
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || 'Could not create account.');
+    form.reset();
+    await loadAccounts();
+    setStatus(`Requestor account “${data.username}” created.`, 'success');
+  } catch (error) { setStatus(error.message || 'Could not create account.', 'error'); }
+}
+
+async function resetAccountPassword(event, form) {
+  event.preventDefault();
+  const username = form.dataset.accountPassword;
+  const password = new FormData(form).get('password');
+  try {
+    const response = await fetch(`/api/accounts/${encodeURIComponent(username)}`, {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({password})});
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || 'Could not reset password.');
+    form.reset();
+    setStatus(`Password reset for “${username}”.`, 'success');
+  } catch (error) { setStatus(error.message || 'Could not reset password.', 'error'); }
+}
+
+async function deleteAccount(username) {
+  if (!confirm(`Delete requestor account “${username}”? They will lose access immediately.`)) return;
+  try {
+    const response = await fetch(`/api/accounts/${encodeURIComponent(username)}`, {method:'DELETE'});
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(data.detail || 'Could not delete account.');
+    }
+    await loadAccounts();
+    setStatus(`Requestor account “${username}” deleted.`, 'success');
+  } catch (error) { setStatus(error.message || 'Could not delete account.', 'error'); }
 }
 
 async function loadCatalog() {
@@ -651,6 +732,7 @@ fetch('/api/session').then(response => response.json()).then(session => {
     showPage('requests');
   } else {
     document.getElementById('downloads-page-tab').hidden = false;
+    document.getElementById('accounts-page-tab').hidden = false;
   }
 }).catch(() => {});
 </script>

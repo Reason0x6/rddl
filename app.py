@@ -58,6 +58,20 @@ def password_hash(password: str, salt: bytes) -> bytes:
     return hashlib.scrypt(password.encode(), salt=salt, n=2**14, r=8, p=1)
 
 
+def persist_auth_users():
+    saved = {
+        username: {
+            "salt": user["salt"].hex(),
+            "password_hash": user["password_hash"].hex(),
+            "role": user["role"],
+        }
+        for username, user in AUTH_USERS.items()
+    }
+    temporary = AUTH_USERS_FILE.with_suffix(".json.tmp")
+    temporary.write_text(json.dumps(saved))
+    temporary.replace(AUTH_USERS_FILE)
+
+
 def initialize_auth():
     if AUTH_USERS_FILE.exists():
         saved_users = json.loads(AUTH_USERS_FILE.read_text())
@@ -81,7 +95,7 @@ def initialize_auth():
             }
             changed = True
         requestor_password = os.environ.get("APP_REQUESTOR_PASSWORD")
-        if requestor_password:
+        if requestor_password and "requestor" not in users:
             salt = secrets.token_bytes(16)
             users["requestor"] = {
                 "salt": salt,
@@ -244,6 +258,15 @@ class DownloadBatchRequest(BaseModel):
 class LoginRequest(BaseModel):
     username: str = Field(min_length=1, max_length=100)
     password: str = Field(min_length=1, max_length=200)
+
+
+class RequestorAccountInput(BaseModel):
+    username: str = Field(min_length=3, max_length=64, pattern=r"^[A-Za-z0-9_.-]+$")
+    password: str = Field(min_length=8, max_length=200)
+
+
+class RequestorPasswordInput(BaseModel):
+    password: str = Field(min_length=8, max_length=200)
 
 
 class MediaRequestInput(BaseModel):
@@ -493,6 +516,65 @@ async def logout():
     response = Response(status_code=204)
     response.delete_cookie(SESSION_COOKIE, path="/")
     return response
+
+
+def require_admin(request: Request):
+    if request.state.role != "admin":
+        raise HTTPException(403, "Admin access required")
+
+
+@app.get("/api/accounts")
+async def list_requestor_accounts(request: Request):
+    require_admin(request)
+    return {"accounts": sorted(
+        ({"username": username, "role": user["role"]}
+         for username, user in AUTH_USERS.items() if user["role"] == "requestor"),
+        key=lambda user: user["username"].casefold(),
+    )}
+
+
+@app.post("/api/accounts", status_code=201)
+async def create_requestor_account(payload: RequestorAccountInput, request: Request):
+    require_admin(request)
+    if payload.username in AUTH_USERS:
+        raise HTTPException(409, "That username is already in use")
+    salt = secrets.token_bytes(16)
+    AUTH_USERS[payload.username] = {
+        "salt": salt,
+        "password_hash": password_hash(payload.password, salt),
+        "role": "requestor",
+    }
+    persist_auth_users()
+    logger.info("requestor account created username=%s by=%s", payload.username, request.state.username)
+    return {"username": payload.username, "role": "requestor"}
+
+
+@app.patch("/api/accounts/{username}")
+async def reset_requestor_password(
+    username: str, payload: RequestorPasswordInput, request: Request
+):
+    require_admin(request)
+    user = AUTH_USERS.get(username)
+    if not user or user["role"] != "requestor":
+        raise HTTPException(404, "Requestor account not found")
+    salt = secrets.token_bytes(16)
+    user["salt"] = salt
+    user["password_hash"] = password_hash(payload.password, salt)
+    persist_auth_users()
+    logger.info("requestor password reset username=%s by=%s", username, request.state.username)
+    return {"username": username, "updated": True}
+
+
+@app.delete("/api/accounts/{username}", status_code=204)
+async def delete_requestor_account(username: str, request: Request):
+    require_admin(request)
+    user = AUTH_USERS.get(username)
+    if not user or user["role"] != "requestor":
+        raise HTTPException(404, "Requestor account not found")
+    del AUTH_USERS[username]
+    persist_auth_users()
+    logger.info("requestor account deleted username=%s by=%s", username, request.state.username)
+    return Response(status_code=204)
 
 
 @app.get("/api/title-search")

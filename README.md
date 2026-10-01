@@ -38,6 +38,12 @@ and that password. The generated credential verifier, session key, and request
 queue are persisted in `./data`. Set `AUTH_COOKIE_SECURE=1` when the app is
 served only over HTTPS.
 
+Admins can create requestor accounts, reset their passwords, and remove access
+from the **Accounts** page. Credentials are stored as salted password hashes in
+`./data/users.json`. `APP_REQUESTOR_PASSWORD` bootstraps the legacy `requestor`
+account when it is first created; after that, its password is managed in the
+app and is not overwritten on restart.
+
 Torrentio's Stremio stream protocol uses `/stream/series/<imdb>:<season>:<episode>.json`;
 Stremio documents the series video ID format as `imdb:season:episode`.
 
