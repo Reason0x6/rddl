@@ -68,6 +68,17 @@ def initialize_auth():
             }
             for username, value in saved_users.items()
         }
+        changed = False
+        admin_password = os.environ.get("APP_PASSWORD")
+        if admin_password:
+            admin_username = os.environ.get("APP_USERNAME") or "admin"
+            salt = secrets.token_bytes(16)
+            users[admin_username] = {
+                "salt": salt,
+                "password_hash": password_hash(admin_password, salt),
+                "role": "admin",
+            }
+            changed = True
         requestor_password = os.environ.get("APP_REQUESTOR_PASSWORD")
         if requestor_password:
             salt = secrets.token_bytes(16)
@@ -76,6 +87,8 @@ def initialize_auth():
                 "password_hash": password_hash(requestor_password, salt),
                 "role": "requestor",
             }
+            changed = True
+        if changed:
             AUTH_USERS_FILE.write_text(json.dumps({
                 username: {"salt": user["salt"].hex(), "password_hash": user["password_hash"].hex(), "role": user["role"]}
                 for username, user in users.items()
