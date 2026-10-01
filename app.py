@@ -195,7 +195,10 @@ async def require_login(request: Request, call_next):
         "/api/login", "/api/session",
     } and not username:
         return JSONResponse({"detail": "Login required"}, status_code=401)
-    requestor_routes = {"/api/session", "/api/logout", "/api/title-search", "/api/requests"}
+    requestor_routes = {
+        "/api/session", "/api/logout", "/api/title-search", "/api/requests",
+        "/api/discover", "/api/discover-season", "/api/discover-movie",
+    }
     if username and request.state.role == "requestor" and request.url.path.startswith("/api/"):
         allowed = request.url.path in requestor_routes
         if request.url.path.startswith("/api/requests/") and request.method == "GET":
