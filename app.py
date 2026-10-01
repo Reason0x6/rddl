@@ -287,6 +287,15 @@ def safe_name(value: str) -> str:
     return value[:180] or "Unknown"
 
 
+def download_target_dir(req: DownloadRequest) -> Path:
+    destination_root = ROOT / ("TV" if req.media_type == "tv" else "Movies")
+    if req.media_type == "tv":
+        if req.season is None:
+            raise HTTPException(422, "Season is required for TV downloads")
+        return destination_root / safe_name(req.title or "Unknown show") / f"S{req.season:02d}"
+    return destination_root
+
+
 def rd_headers():
     return {"Authorization": f"Bearer {TOKEN}"}
 
@@ -927,6 +936,8 @@ async def rd_get(client, path, params=None):
 
 
 async def download_direct_link(client, url, target, progress_callback=None):
+    if progress_callback:
+        progress_callback("Downloading video file", 0, f"{target.name} · starting")
     for attempt in range(1, RD_REQUEST_ATTEMPTS + 1):
         try:
             async with client.stream("GET", url) as response:
@@ -1118,15 +1129,8 @@ async def download_locked(req: DownloadRequest, info_hash: str | None, progress_
         if not links:
             raise HTTPException(502, "Completed torrent returned no links")
 
+        target_dir = download_target_dir(req)
         destination_root = ROOT / ("TV" if req.media_type == "tv" else "Movies")
-        if req.media_type == "tv":
-            if req.season is None:
-                raise HTTPException(422, "Season is required for TV downloads")
-            show_dir = destination_root / safe_name(req.title or "Unknown show")
-            target_dir = show_dir / f"S{req.season:02d}"
-        else:
-            target_dir = destination_root
-
         destination_root.mkdir(parents=True, exist_ok=True)
         target_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1335,6 +1339,79 @@ async def list_download_batches():
         {**job, "active": sum(item["status"] == "downloading" for item in job["items"])}
         for job in jobs[:500]
     ]}
+
+
+def destination_folder_info(path: Path, current_files: set[str] | None = None) -> dict:
+    current_files = current_files or set()
+    files = []
+    if path.is_dir():
+        for file_path in sorted(path.iterdir(), key=lambda item: item.name.casefold()):
+            if not file_path.is_file():
+                continue
+            try:
+                size = file_path.stat().st_size
+            except OSError:
+                size = None
+            files.append({
+                "name": file_path.name,
+                "size": size,
+                "current": file_path.name.casefold() in current_files,
+            })
+    return {"path": str(path), "files": files}
+
+
+@app.get("/api/downloads/current")
+async def current_downloads():
+    active = []
+    folder_requests: dict[str, tuple[Path, set[str]]] = {}
+    for job_id, job in download_jobs.items():
+        requests = download_requests.get(job_id, [])
+        for index, item in enumerate(job.get("items", [])):
+            if item.get("status") != "downloading" or index >= len(requests):
+                continue
+            req = requests[index]
+            destination = download_target_dir(req)
+            detail = item.get("detail") or ""
+            current_file = detail.split(" · ", 1)[0] if item.get("stage") == "Downloading video file" else ""
+            active.append({
+                "title": item.get("title") or req.title or "Untitled download",
+                "file": current_file,
+                "stage": item.get("stage") or "Preparing download",
+                "progress": item.get("progress"),
+                "detail": detail,
+                "destination": str(destination),
+            })
+            entry = folder_requests.setdefault(str(destination), (destination, set()))
+            if current_file:
+                entry[1].add(current_file.casefold())
+
+    if not active:
+        for job_id, job in sorted(
+            download_jobs.items(),
+            key=lambda pair: pair[1].get("created_at", ""),
+            reverse=True,
+        ):
+            requests = download_requests.get(job_id, [])
+            candidates = [
+                (item, requests[index]) for index, item in enumerate(job.get("items", []))
+                if index < len(requests) and item.get("status") in {"complete", "failed"}
+            ]
+            candidates.sort(key=lambda pair: pair[0].get("status") == "complete", reverse=True)
+            if candidates:
+                req = candidates[0][1]
+                destination = download_target_dir(req)
+                if destination.is_dir():
+                    folder_requests[str(destination)] = (destination, set())
+                    break
+
+    return {
+        "active_count": len(active),
+        "downloads": active,
+        "folders": [
+            destination_folder_info(path, current_files)
+            for path, current_files in folder_requests.values()
+        ],
+    }
 
 
 @app.get("/api/download-batches/{job_id}")
