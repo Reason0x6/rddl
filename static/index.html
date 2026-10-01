@@ -1,0 +1,90 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>RD Media Downloader</title>
+<style>
+body { font-family: system-ui, sans-serif; max-width: 1100px; margin: 40px auto; padding: 0 20px; }
+input, select, button { padding: 9px; margin: 4px; }
+table { width:100%; border-collapse:collapse; margin-top:20px; }
+th,td { padding:8px; border-bottom:1px solid #ddd; text-align:left; }
+button { cursor:pointer; }
+.muted { color:#666; }
+</style>
+</head>
+<body>
+<h1>Real-Debrid Media Downloader</h1>
+<p class="muted">Torrentio discovery is ranking-only. Select a candidate, then explicitly submit its magnet to RD.</p>
+
+<div>
+  <input id="imdb" placeholder="IMDb ID e.g. tt0903747">
+  <input id="season" type="number" min="1" value="1" placeholder="Season">
+  <input id="episode" type="number" min="1" value="1" placeholder="Episode">
+  <button onclick="discover()">Discover</button>
+</div>
+
+<div id="status"></div>
+<table id="results" hidden>
+<thead><tr><th>Seeds</th><th>Resolution</th><th>Release</th><th>Action</th></tr></thead>
+<tbody></tbody>
+</table>
+
+<script>
+let streams = [];
+
+async function discover() {
+  const imdb = document.getElementById('imdb').value.trim();
+  const s = document.getElementById('season').value;
+  const e = document.getElementById('episode').value;
+  document.getElementById('status').textContent = 'Querying Torrentio...';
+
+  const r = await fetch(`/api/discover?imdb_id=${encodeURIComponent(imdb)}&season=${s}&episode=${e}`);
+  const data = await r.json();
+  if (!r.ok) {
+    document.getElementById('status').textContent = data.detail || 'Discovery failed';
+    return;
+  }
+
+  streams = data.streams;
+  const body = document.querySelector('#results tbody');
+  body.innerHTML = '';
+
+  streams.forEach((x, i) => {
+    const tr = document.createElement('tr');
+    const release = x.name || x.title || x.description || 'Unnamed';
+    tr.innerHTML = `<td>${x.seeders < 0 ? '?' : x.seeders.toLocaleString()}</td>
+      <td>${x.resolution || '?'}</td>
+      <td>${escapeHtml(release)}</td>
+      <td><button onclick="download(${i})">Send selected magnet to RD</button></td>`;
+    body.appendChild(tr);
+  });
+
+  document.getElementById('results').hidden = false;
+  document.getElementById('status').textContent =
+    `${streams.length} candidate(s), sorted by reported seeders.`;
+}
+
+async function download(i) {
+  const x = streams[i];
+  const type = prompt('Type: tv or movies', 'tv');
+  if (type !== 'tv' && type !== 'movies') return;
+  const title = prompt('Library folder/title', '') || undefined;
+
+  const r = await fetch('/api/download', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({magnet:x.magnet, media_type:type, title})
+  });
+  const data = await r.json();
+  document.getElementById('status').textContent =
+    r.ok ? `Downloaded: ${JSON.stringify(data.files)}` : (data.detail || 'Download failed');
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'
+  }[c]));
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+services:
+  rd-downloader:
+    build: .
+    container_name: rd-downloader
+    restart: unless-stopped
+    environment:
+      REAL_DEBRID_TOKEN: ${REAL_DEBRID_TOKEN}
+      DOWNLOAD_ROOT: /media
+      POLL_SECONDS: "10"
+      PORT: "8080"
+      # Set this to your configured Torrentio endpoint.
+      # Example: https://torrentio.strem.fun/<your-config>
+      TORRENTIO_URL: ${TORRENTIO_URL}
+    ports:
+      - "8080:8080"
+    volumes:
+      - /media:/media
+      - ./data:/data
