@@ -89,6 +89,7 @@ let selected = new Map();
 let currentJob = null;
 const statusEl = document.getElementById('status');
 const resultsSection = document.getElementById('results');
+let currentRole = 'admin';
 
 document.getElementById('tv-tab').addEventListener('click', () => selectPanel('tv'));
 document.getElementById('movie-tab').addEventListener('click', () => selectPanel('movie'));
@@ -117,6 +118,7 @@ function showPage(page) {
   document.getElementById('results').hidden = requests || !episodeResults.length && !movieResults.length;
   document.getElementById('request-panel').hidden = !requests;
   document.getElementById('selection-bar').hidden = requests || selected.size === 0 && !currentJob;
+  if (currentRole === 'requestor' && !requests) return showPage('requests');
   if (requests) loadRequests();
   setStatus('');
 }
@@ -281,11 +283,13 @@ function renderRequests(requests) {
     const type = item.media_type === 'series' ? 'TV show' : 'Movie';
     const season = item.season ? ` · Season ${String(item.season).padStart(2, '0')}` : '';
     const requested = new Date(item.created_at).toLocaleString();
-    card.innerHTML = `<div class="request-copy"><strong>${escapeHtml(item.title)}${item.year ? ` (${escapeHtml(item.year)})` : ''}</strong><p>${type}${season} · IMDb ${escapeHtml(item.imdb_id)} · Requested ${escapeHtml(requested)}</p></div><button class="button secondary small" type="button">Find releases</button><span class="request-state ${escapeHtml(item.status)}">${escapeHtml(item.status)}</span><label class="status-control">Status<select data-request-status="${item.id}"><option value="requested">Requested</option><option value="downloading">Downloading</option><option value="completed">Completed</option><option value="declined">Declined</option></select></label>`;
-    card.querySelector('.button').addEventListener('click', () => openRequestInDownloader(item));
-    const select = card.querySelector('select');
-    select.value = item.status;
-    select.addEventListener('change', () => updateRequestStatus(item.id, select.value));
+    card.innerHTML = `<div class="request-copy"><strong>${escapeHtml(item.title)}${item.year ? ` (${escapeHtml(item.year)})` : ''}</strong><p>${type}${season} · IMDb ${escapeHtml(item.imdb_id)} · Requested ${escapeHtml(requested)}</p></div>${currentRole === 'admin' ? '<button class="button secondary small" type="button">Find releases</button>' : ''}<span class="request-state ${escapeHtml(item.status)}">${escapeHtml(item.status)}</span>${currentRole === 'admin' ? `<label class="status-control">Status<select data-request-status="${item.id}"><option value="requested">Requested</option><option value="downloading">Downloading</option><option value="completed">Completed</option><option value="declined">Declined</option></select></label>` : ''}`;
+    if (currentRole === 'admin') {
+      card.querySelector('.button').addEventListener('click', () => openRequestInDownloader(item));
+      const select = card.querySelector('select');
+      select.value = item.status;
+      select.addEventListener('change', () => updateRequestStatus(item.id, select.value));
+    }
     list.append(card);
   });
 }
@@ -504,6 +508,15 @@ function updateDownloadStatuses(items) {
 
 function setStatus(message, kind = '') { statusEl.textContent = message; statusEl.className = `status ${kind}`; }
 function escapeHtml(value) { return String(value).replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[char])); }
+
+fetch('/api/session').then(response => response.json()).then(session => {
+  currentRole = session.role || 'admin';
+  if (currentRole === 'requestor') {
+    document.getElementById('download-page-tab').hidden = true;
+    document.getElementById('media-tabs').hidden = true;
+    showPage('requests');
+  }
+}).catch(() => {});
 </script>
 </body>
 </html>

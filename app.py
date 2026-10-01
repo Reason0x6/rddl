@@ -28,6 +28,7 @@ TORRENTIO_URL = os.environ.get("TORRENTIO_URL", "").rstrip("/")
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 REQUEST_DB = DATA_DIR / "requests.sqlite3"
 AUTH_STATE_FILE = DATA_DIR / "auth.json"
+AUTH_USERS_FILE = DATA_DIR / "users.json"
 SESSION_KEY_FILE = DATA_DIR / "session.key"
 RD_REQUEST_ATTEMPTS = 3
 RETRYABLE_HTTP_STATUSES = {408, 425, 429}
@@ -57,29 +58,41 @@ def password_hash(password: str, salt: bytes) -> bytes:
 
 
 def initialize_auth():
+    if AUTH_USERS_FILE.exists():
+        saved_users = json.loads(AUTH_USERS_FILE.read_text())
+        return {
+            username: {
+                "salt": bytes.fromhex(value["salt"]),
+                "password_hash": bytes.fromhex(value["password_hash"]),
+                "role": value["role"],
+            }
+            for username, value in saved_users.items()
+        }
+
     configured_password = os.environ.get("APP_PASSWORD")
     configured_username = os.environ.get("APP_USERNAME")
     if configured_password:
         username = configured_username or "admin"
         salt = secrets.token_bytes(16)
-        return username, salt, password_hash(configured_password, salt)
-
-    if AUTH_STATE_FILE.exists():
+        users = {username: {"salt": salt, "password_hash": password_hash(configured_password, salt), "role": "admin"}}
+    elif AUTH_STATE_FILE.exists():
         saved = json.loads(AUTH_STATE_FILE.read_text())
-        return saved["username"], bytes.fromhex(saved["salt"]), bytes.fromhex(saved["password_hash"])
+        username = saved["username"]
+        users = {username: {"salt": bytes.fromhex(saved["salt"]),
+                            "password_hash": bytes.fromhex(saved["password_hash"]), "role": "admin"}}
+    else:
+        username = configured_username or "admin"
+        initial_password = secrets.token_urlsafe(18)
+        salt = secrets.token_bytes(16)
+        users = {username: {"salt": salt, "password_hash": password_hash(initial_password, salt), "role": "admin"}}
+        logger.warning("Initial app login created username=%s password=%s; set APP_PASSWORD to replace it",
+                       username, initial_password)
 
-    username = configured_username or "admin"
-    initial_password = secrets.token_urlsafe(18)
-    salt = secrets.token_bytes(16)
-    verifier = password_hash(initial_password, salt)
-    AUTH_STATE_FILE.write_text(json.dumps({
-        "username": username,
-        "salt": salt.hex(),
-        "password_hash": verifier.hex(),
+    AUTH_USERS_FILE.write_text(json.dumps({
+        username: {"salt": user["salt"].hex(), "password_hash": user["password_hash"].hex(), "role": user["role"]}
+        for username, user in users.items()
     }))
-    logger.warning("Initial app login created username=%s password=%s; set APP_PASSWORD to replace it",
-                   username, initial_password)
-    return username, salt, verifier
+    return users
 
 
 def load_session_key() -> bytes:
@@ -94,7 +107,7 @@ def load_session_key() -> bytes:
     return key
 
 
-AUTH_USERNAME, AUTH_SALT, AUTH_PASSWORD_HASH = initialize_auth()
+AUTH_USERS = initialize_auth()
 SESSION_KEY = load_session_key()
 
 
@@ -140,7 +153,7 @@ def session_username(cookie: str | None) -> str | None:
     try:
         decoded = base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)).decode()
         username, expires = decoded.rsplit("|", 1)
-        if int(expires) < int(time.time()) or username != AUTH_USERNAME:
+        if int(expires) < int(time.time()) or username not in AUTH_USERS:
             return None
         return username
     except (ValueError, UnicodeDecodeError):
@@ -151,10 +164,18 @@ def session_username(cookie: str | None) -> str | None:
 async def require_login(request: Request, call_next):
     username = session_username(request.cookies.get(SESSION_COOKIE))
     request.state.username = username
+    request.state.role = AUTH_USERS[username]["role"] if username else None
     if request.url.path.startswith("/api/") and request.url.path not in {
         "/api/login", "/api/session",
     } and not username:
         return JSONResponse({"detail": "Login required"}, status_code=401)
+    requestor_routes = {"/api/session", "/api/logout", "/api/title-search", "/api/requests"}
+    if username and request.state.role == "requestor":
+        allowed = request.url.path in requestor_routes
+        if request.url.path.startswith("/api/requests/") and request.method == "GET":
+            allowed = True
+        if not allowed:
+            return JSONResponse({"detail": "This account can only submit and view media requests"}, status_code=403)
     if username and request.method not in {"GET", "HEAD", "OPTIONS"}:
         origin = request.headers.get("origin")
         host = request.headers.get("host")
@@ -390,7 +411,8 @@ async def index(request: Request):
 
 @app.get("/api/session")
 async def get_session(request: Request):
-    return {"authenticated": bool(request.state.username), "username": request.state.username}
+    return {"authenticated": bool(request.state.username), "username": request.state.username,
+            "role": request.state.role}
 
 
 @app.post("/api/login")
@@ -399,18 +421,21 @@ async def login(payload: LoginRequest, request: Request):
     failures, retry_after = LOGIN_FAILURES.get(client_ip, (0, 0))
     if retry_after > time.time():
         raise HTTPException(429, "Too many login attempts. Try again shortly.")
-    candidate_hash = password_hash(payload.password, AUTH_SALT)
-    valid_username = hmac.compare_digest(payload.username, AUTH_USERNAME)
-    valid_password = hmac.compare_digest(candidate_hash, AUTH_PASSWORD_HASH)
-    if not (valid_username and valid_password):
+    user = AUTH_USERS.get(payload.username)
+    valid_password = False
+    if user:
+        candidate_hash = password_hash(payload.password, user["salt"])
+        valid_password = hmac.compare_digest(candidate_hash, user["password_hash"])
+    if not user or not valid_password:
         failures += 1
         LOGIN_FAILURES[client_ip] = (0, time.time() + 60) if failures >= 5 else (failures, 0)
         raise HTTPException(401, "Incorrect username or password")
     LOGIN_FAILURES.pop(client_ip, None)
-    response = JSONResponse({"authenticated": True, "username": AUTH_USERNAME})
+    response = JSONResponse({"authenticated": True, "username": payload.username,
+                             "role": user["role"]})
     response.set_cookie(
         SESSION_COOKIE,
-        make_session(AUTH_USERNAME),
+        make_session(payload.username),
         max_age=SESSION_TTL,
         httponly=True,
         secure=AUTH_COOKIE_SECURE,
