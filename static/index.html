@@ -17,6 +17,17 @@
 .catalog-summary{display:flex;flex-wrap:wrap;gap:10px}.catalog-stat{padding:9px 13px;border:1px solid var(--line);border-radius:11px;background:var(--paper);color:var(--muted);font-size:13px}.catalog-stat strong{margin-right:4px;color:var(--ink);font-size:16px}.catalog-list{display:grid;gap:10px}.catalog-item{padding:15px 17px;border:1px solid var(--line);border-radius:14px;background:var(--paper)}.catalog-item>strong{display:block;overflow-wrap:anywhere}.catalog-item p{margin:4px 0 0;color:var(--muted);font-size:12px;overflow-wrap:anywhere}.catalog-seasons{display:flex;flex-wrap:wrap;gap:7px;margin-top:9px}@media(max-width:650px){.page-tabs .tab{min-width:0;flex:1;padding:8px 7px;font-size:12px}.page-tabs .tab:last-child{margin-left:0}}
 .download-job-list{display:grid;gap:12px}.download-job-card{padding:17px;border:1px solid var(--line);border-radius:15px;background:var(--paper);box-shadow:0 4px 12px #172a1d08}.download-job-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}.download-job-head strong{overflow-wrap:anywhere}.download-job-time{margin-top:3px;color:var(--muted);font-size:12px}.download-job-state{padding:4px 10px;border-radius:99px;background:#eef2ee;color:#526158;font-size:12px;font-weight:700;text-transform:capitalize;white-space:nowrap}.download-job-state.running{background:var(--amber-pale);color:var(--amber)}.download-job-state.complete{background:var(--green-pale);color:var(--green-dark)}.download-job-items{display:grid;gap:8px;margin:13px 0 0;padding:0;list-style:none}.download-job-item{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px 12px;padding-top:9px;border-top:1px solid var(--line)}.download-job-item strong{overflow-wrap:anywhere}.download-item-state{font-size:12px;font-weight:700;text-transform:capitalize}.download-item-state.downloading{color:var(--amber)}.download-item-state.complete{color:var(--green-dark)}.download-item-state.failed{color:#a3342b}.download-item-detail{grid-column:1/-1;color:var(--muted);font-size:12px;overflow-wrap:anywhere}@media(max-width:650px){.download-job-card{padding:13px}.download-job-item{grid-template-columns:minmax(0,1fr) auto}}
 </style>
+<style>
+.library-notice{margin:18px 2px 0;padding:12px 14px;border:1px solid #e8d29f;border-radius:12px;background:#fff8e9;color:#76521c;font-size:13px;font-weight:650}
+.catalog-search-label{display:block;max-width:420px;margin:18px 0 12px}
+.catalog-table-wrap{overflow:auto;border:1px solid var(--line);border-radius:14px;background:var(--paper)}
+.catalog-table{width:100%;border-collapse:collapse;text-align:left;font-size:13px}
+.catalog-table th,.catalog-table td{padding:11px 13px;border-bottom:1px solid var(--line);vertical-align:top}
+.catalog-table th{color:var(--muted);background:#f8faf7;font-size:11px;letter-spacing:.05em;text-transform:uppercase;white-space:nowrap}
+.catalog-table tr:last-child td{border-bottom:0}.catalog-table td strong{overflow-wrap:anywhere}.catalog-file{max-width:280px;overflow-wrap:anywhere;color:var(--muted)}.catalog-no-results{padding:24px!important;color:var(--muted);text-align:center}
+.download-progress{grid-column:1/-1;display:flex;align-items:center;gap:10px;color:var(--muted);font-size:11px}.download-progress progress{width:min(360px,100%);height:8px;accent-color:var(--green)}.download-item-warning{grid-column:1/-1;color:var(--amber);font-size:12px;overflow-wrap:anywhere}
+@media(max-width:650px){.catalog-table{min-width:660px}}
+</style>
 </head>
 <body>
 <main class="shell">
@@ -76,10 +87,8 @@
   <section class="catalog-page" id="catalog-panel" hidden>
     <div class="section-head"><div><h2>Your library</h2><p>Movies, TV shows, and downloaded seasons currently in Media.</p></div><button class="button secondary small" id="refresh-catalog" type="button">Refresh</button></div>
     <div class="catalog-summary" id="catalog-summary"></div>
-    <div class="section-head"><div><h2>Movies</h2></div></div>
-    <div class="catalog-list" id="catalog-movies"></div>
-    <div class="section-head"><div><h2>TV shows</h2></div></div>
-    <div class="catalog-list" id="catalog-shows"></div>
+    <label class="catalog-search-label">Search catalog<input id="catalog-search" type="search" placeholder="Search titles, seasons, years, or files" autocomplete="off"></label>
+    <div class="catalog-table-wrap"><table class="catalog-table"><thead><tr><th>Type</th><th>Title</th><th>Year / season</th><th>Episodes / files</th><th>File</th></tr></thead><tbody id="catalog-table-body"></tbody></table></div>
   </section>
 
   <section class="downloads-page" id="downloads-panel" hidden>
@@ -89,6 +98,7 @@
 
   <div class="status" id="status" role="status" aria-live="polite"></div>
   <section id="results" hidden>
+    <div class="library-notice" id="library-notice" hidden></div>
     <div class="section-head"><div><h2 id="result-heading">Results</h2><p id="result-subtitle"></p></div><div style="display:flex;align-items:center;gap:12px"><button class="button secondary small" id="select-top-seeds" type="button" hidden>Select all top seeds</button><div class="count" id="result-count"></div></div></div>
     <div class="episodes" id="episodes"></div>
     <div class="movies" id="movies"></div>
@@ -105,6 +115,7 @@ let movieResults = [];
 let titleSearchResults = [];
 let seriesTitle = '';
 let movieTitle = '';
+let catalogRows = [];
 let selected = new Map();
 let currentJob = null;
 let downloadHistoryTimer = null;
@@ -129,6 +140,7 @@ document.getElementById('request-search-form').addEventListener('submit', event 
 document.getElementById('request-media-type').addEventListener('change', updateRequestFields);
 document.getElementById('refresh-requests').addEventListener('click', loadRequests);
 document.getElementById('refresh-catalog').addEventListener('click', loadCatalog);
+document.getElementById('catalog-search').addEventListener('input', renderCatalogTable);
 document.getElementById('refresh-downloads').addEventListener('click', loadDownloadHistory);
 
 function showPage(page) {
@@ -190,6 +202,11 @@ async function discoverSeason() {
     if (!response.ok) throw new Error(data.detail || 'Season search failed.');
     episodeResults = data.episodes;
     seriesTitle = data.series_title;
+    showLibraryNotice(data.already_downloaded
+      ? `${data.series_title} · S${String(season).padStart(2, '0')} is already in your Catalog. You can still download another copy.`
+      : data.show_in_catalog
+        ? `${data.series_title} is in your Catalog (${(data.downloaded_seasons || []).join(', ')}). Season S${String(season).padStart(2, '0')} can still be downloaded.`
+        : '');
     document.getElementById('select-top-seeds').hidden = currentRole === 'requestor' || !episodeResults.some(item => item.choices?.length);
     document.getElementById('result-heading').textContent = `${data.series_title} · Season ${season}`;
     document.getElementById('result-subtitle').textContent = 'Choose one of the two highest-seeder releases per episode';
@@ -215,6 +232,7 @@ async function discoverMovie() {
     if (!response.ok) throw new Error(data.detail || 'Movie search failed.');
     movieResults = data.streams;
     movieTitle = data.movie_title;
+    showLibraryNotice(data.already_downloaded ? `${movieTitle} is already in your Catalog. You can still download another copy.` : '');
     document.getElementById('select-top-seeds').hidden = true;
     document.getElementById('result-heading').textContent = data.movie_title;
     document.getElementById('result-subtitle').textContent = 'Releases ranked by reported seeders';
@@ -306,23 +324,33 @@ async function loadRequests() {
 }
 
 async function loadCatalog() {
-  const movieList = document.getElementById('catalog-movies');
-  const showList = document.getElementById('catalog-shows');
+  const body = document.getElementById('catalog-table-body');
   try {
     const response = await fetch('/api/catalog');
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || 'Could not load the media catalog.');
     document.getElementById('catalog-summary').innerHTML = `<span class="catalog-stat"><strong>${data.movie_count}</strong> movies</span><span class="catalog-stat"><strong>${data.show_count}</strong> shows</span><span class="catalog-stat"><strong>${data.episode_count}</strong> episodes</span>`;
-    movieList.innerHTML = data.movies.length
-      ? data.movies.map(movie => `<article class="catalog-item"><strong>${escapeHtml(movie.title)}${movie.year ? ` (${escapeHtml(movie.year)})` : ''}</strong><p>${escapeHtml(movie.file)}</p></article>`).join('')
-      : '<div class="empty"><strong>No movies found</strong>Movies in the library will appear here.</div>';
-    showList.innerHTML = data.shows.length
-      ? data.shows.map(show => `<article class="catalog-item"><strong>${escapeHtml(show.title)}</strong><div class="catalog-seasons">${show.seasons.map(season => `<span class="badge neutral">${escapeHtml(season.name)} · ${season.episodes} ${season.episodes === 1 ? 'episode' : 'episodes'}</span>`).join('')}</div></article>`).join('')
-      : '<div class="empty"><strong>No TV shows found</strong>Shows and seasons in the library will appear here.</div>';
+    catalogRows = [
+      ...data.movies.map(movie => ({type: 'Movie', title: movie.title, yearSeason: movie.year || '—', count: '1 file', file: movie.file})),
+      ...data.shows.flatMap(show => show.seasons.map(season => ({
+        type: 'TV show', title: show.title, yearSeason: season.name,
+        count: `${season.episodes} ${season.episodes === 1 ? 'episode' : 'episodes'}`, file: '',
+      }))),
+    ];
+    renderCatalogTable();
   } catch (error) {
-    movieList.innerHTML = `<div class="empty"><strong>Could not load catalog</strong>${escapeHtml(error.message || '')}</div>`;
-    showList.replaceChildren();
+    body.innerHTML = `<tr><td colspan="5">${escapeHtml(error.message || 'Could not load catalog.')}</td></tr>`;
   }
+}
+
+function renderCatalogTable() {
+  const body = document.getElementById('catalog-table-body');
+  const query = document.getElementById('catalog-search').value.trim().toLocaleLowerCase();
+  const filtered = catalogRows.filter(row =>
+    [row.type, row.title, row.yearSeason, row.count, row.file].join(' ').toLocaleLowerCase().includes(query));
+  body.innerHTML = filtered.length
+    ? filtered.map(row => `<tr><td><span class="badge neutral">${escapeHtml(row.type)}</span></td><td><strong>${escapeHtml(row.title)}</strong></td><td>${escapeHtml(row.yearSeason)}</td><td>${escapeHtml(row.count)}</td><td class="catalog-file">${escapeHtml(row.file || '—')}</td></tr>`).join('')
+    : '<tr><td class="catalog-no-results" colspan="5">No matching items in the catalog.</td></tr>';
 }
 
 async function loadDownloadHistory() {
@@ -359,8 +387,11 @@ function renderDownloadHistory(jobs) {
     const active = job.active || 0;
     const created = job.created_at ? new Date(job.created_at).toLocaleString() : 'Time unavailable';
     const items = (job.items || []).map(item => {
-      const detail = item.error || item.result?.destination || (item.status === 'queued' ? 'Waiting to start' : '');
-      return `<li class="download-job-item"><strong>${escapeHtml(item.title || `Selection ${item.index + 1}`)}</strong><span class="download-item-state ${escapeHtml(item.status)}">${escapeHtml(item.status)}</span>${detail ? `<span class="download-item-detail">${escapeHtml(detail)}</span>` : ''}</li>`;
+      const percent = Math.max(0, Math.min(100, Number(item.progress) || 0));
+      const detail = item.error || item.detail || item.result?.destination || (item.status === 'queued' ? 'Waiting to start' : '');
+      const warnings = (item.warnings || item.result?.warnings || []).map(warning => `<span class="download-item-warning">${escapeHtml(warning)}</span>`).join('');
+      const progress = item.status === 'downloading' ? `<div class="download-progress"><progress max="100" value="${percent}"></progress><span>${percent}%</span></div>` : '';
+      return `<li class="download-job-item"><strong>${escapeHtml(item.title || `Selection ${item.index + 1}`)}</strong><span class="download-item-state ${escapeHtml(item.status)}">${escapeHtml(item.status)}</span>${progress}${detail ? `<span class="download-item-detail">${escapeHtml(item.stage ? `${item.stage}: ` : '')}${escapeHtml(detail)}</span>` : ''}${warnings}</li>`;
     }).join('');
     const progress = `${complete} complete · ${active} active · ${failed} failed of ${job.total}`;
     return `<article class="download-job-card"><div class="download-job-head"><div><strong>${escapeHtml(progress)}</strong><div class="download-job-time">Started ${escapeHtml(created)}</div></div><span class="download-job-state ${escapeHtml(job.status)}">${escapeHtml(job.status)}</span></div><ul class="download-job-items">${items}</ul></article>`;
@@ -423,10 +454,16 @@ async function updateRequestStatus(id, status) {
 function beginSearch(button, message, label) {
   clearSelection();
   resultsSection.hidden = true;
+  showLibraryNotice('');
   setStatus(message);
   button.disabled = true;
   button.dataset.label = label;
   button.innerHTML = `<span class="spin" aria-hidden="true"></span>${escapeHtml(label)}`;
+}
+function showLibraryNotice(message) {
+  const notice = document.getElementById('library-notice');
+  notice.textContent = message;
+  notice.hidden = !message;
 }
 function endSearch(button, label) {
   button.disabled = false;
