@@ -512,9 +512,9 @@ async function loadDownloadHistory() {
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || 'Could not load current downloads.');
     renderCurrentDownloads(data);
-    if (data.active_count > 0 && !downloadHistoryTimer) {
+    if (data.pending_count > 0 && !downloadHistoryTimer) {
       downloadHistoryTimer = setInterval(loadDownloadHistory, 2500);
-    } else if (!data.active_count && downloadHistoryTimer) {
+    } else if (!data.pending_count && downloadHistoryTimer) {
       clearInterval(downloadHistoryTimer);
       downloadHistoryTimer = null;
     }

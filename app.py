@@ -1406,6 +1406,11 @@ async def current_downloads():
 
     return {
         "active_count": len(active),
+        "pending_count": sum(
+            item.get("status") in {"queued", "downloading"}
+            for job in download_jobs.values()
+            for item in job.get("items", [])
+        ),
         "downloads": active,
         "folders": [
             destination_folder_info(path, current_files)
