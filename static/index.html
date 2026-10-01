@@ -6,15 +6,17 @@
 <meta name="theme-color" content="#f4f5f2">
 <title>RD Media Downloader</title>
 <style>
+[hidden]{display:none!important}
 :root{color-scheme:light;--ink:#18221e;--muted:#69756f;--line:#e3e8e3;--paper:#fff;--canvas:#f4f5f2;--green:#177b56;--green-dark:#116344;--green-pale:#eaf5ee;--amber:#9c5c12;--amber-pale:#fff4df;--shadow:0 16px 40px #1c302512}
 *{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(ellipse at 78% -15%,#dceee2 0,transparent 38%),var(--canvas);color:var(--ink);font:15px/1.5 ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}button,input{font:inherit}button{cursor:pointer}.shell{width:min(900px,calc(100% - 36px));margin:0 auto;padding:38px 0 72px}.brand{display:flex;align-items:center;gap:11px;margin-bottom:48px;font-weight:700;letter-spacing:-.02em}.brand-mark{display:grid;place-items:center;width:37px;height:37px;border-radius:12px;color:white;background:var(--green);box-shadow:0 5px 14px #177b5633}.brand-mark svg{width:20px;height:20px}.eyebrow{color:var(--green);font-size:12px;font-weight:750;letter-spacing:.13em;text-transform:uppercase}h1{margin:9px 0 10px;font-size:clamp(32px,5vw,46px);line-height:1.08;letter-spacing:-.045em}.intro{max-width:620px;margin:0;color:var(--muted);font-size:16px}.tabs{display:flex;gap:6px;width:max-content;margin-top:30px;padding:5px;border:1px solid #e3e9e3;border-radius:13px;background:#e9ede9}.tab{min-width:124px;padding:9px 15px;border:0;border-radius:9px;color:#627068;background:transparent;font-weight:700}.tab.active{color:var(--green-dark);background:white;box-shadow:0 2px 7px #172a1d12}.search-card{margin-top:14px;padding:23px;border:1px solid #e7ebe6;border-radius:20px;background:#ffffffe0;box-shadow:var(--shadow)}.fields{display:grid;grid-template-columns:minmax(0,1fr) 150px auto;gap:14px;align-items:end}.fields.movie{grid-template-columns:minmax(0,1fr) auto}label{display:block;color:#48554e;font-size:13px;font-weight:650}input{display:block;width:100%;height:46px;margin-top:7px;padding:0 13px;border:1px solid #d8dfd9;border-radius:10px;outline:none;color:var(--ink);background:white}input:focus{border-color:#60a483;box-shadow:0 0 0 3px #177b561a}.help{margin:8px 0 0;color:#7d8982;font-size:12px}.button{display:inline-flex;justify-content:center;align-items:center;gap:8px;min-height:44px;padding:0 16px;border:0;border-radius:10px;color:white;background:var(--green);font-weight:700;transition:background .15s,transform .15s}.button:hover{background:var(--green-dark);transform:translateY(-1px)}.button:disabled{cursor:wait;opacity:.68;transform:none}.button.secondary{color:#405048;background:#eef2ee}.button.secondary:hover{background:#e4ebe5}.button.small{min-height:36px;padding:0 12px;font-size:13px}.status{min-height:25px;margin:16px 3px 0;color:var(--muted);font-size:14px}.status.error{color:#a3342b}.status.success{color:var(--green-dark)}.section-head{display:flex;justify-content:space-between;align-items:end;gap:16px;margin:37px 2px 15px}.section-head h2{margin:0;font-size:22px;letter-spacing:-.03em}.section-head p{margin:3px 0 0;color:var(--muted);font-size:13px}.count{color:var(--muted);font-size:13px;white-space:nowrap}.episodes,.movies{display:grid;gap:11px}.episode,.movie{display:grid;grid-template-columns:58px minmax(0,1fr) auto;align-items:center;gap:16px;padding:16px 18px;border:1px solid var(--line);border-radius:15px;background:var(--paper);box-shadow:0 4px 12px #172a1d08}.episode-number,.movie-number{display:grid;place-items:center;width:48px;height:48px;border-radius:13px;color:var(--green-dark);background:var(--green-pale);font-size:14px;font-weight:750}.episode-title,.movie-title{margin:0;overflow-wrap:anywhere;font-weight:700;letter-spacing:-.01em}.release{margin:4px 0 0;color:var(--muted);font-size:13px;overflow-wrap:anywhere}.episode-meta,.movie-meta{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:8px}.badge{display:inline-flex;align-items:center;min-height:24px;padding:2px 9px;border-radius:999px;color:#295440;background:var(--green-pale);font-size:12px;font-weight:700}.badge.neutral{color:#5d6962;background:#f0f2ef}.no-result{color:var(--muted);font-size:13px}.empty{padding:32px 18px;border:1px dashed #cfd8d0;border-radius:15px;color:var(--muted);background:#ffffff80;text-align:center}.empty strong{display:block;margin-bottom:4px;color:#35443b}dialog{width:min(440px,calc(100% - 28px));padding:0;border:0;border-radius:18px;box-shadow:0 24px 80px #0d1b1580}dialog::backdrop{background:#13251bb0;backdrop-filter:blur(3px)}.dialog-body{padding:23px}.dialog-body h2{margin:0;font-size:22px;letter-spacing:-.03em}.dialog-body>p{margin:7px 0 18px;color:var(--muted)}.path-preview{padding:12px;border-radius:10px;color:#345342;background:var(--green-pale);font-size:13px;overflow-wrap:anywhere}.dialog-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:22px}.spin{width:15px;height:15px;border:2px solid #ffffff70;border-top-color:white;border-radius:50%;animation:spin .7s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
 @media(max-width:650px){.shell{width:min(100% - 24px,540px);padding-top:23px}.brand{margin-bottom:35px}.tabs{width:100%}.tab{flex:1}.search-card{padding:17px}.fields{grid-template-columns:1fr 105px}.fields.movie{grid-template-columns:1fr}.fields .button{grid-column:1/-1;width:100%}.episode,.movie{grid-template-columns:48px minmax(0,1fr);gap:12px;padding:14px}.episode-number,.movie-number{width:42px;height:42px}.episode .button,.movie .button,.episode .no-result{grid-column:2;justify-self:start}.section-head{align-items:start;flex-direction:column;gap:4px}}
+.episode,.movie{grid-template-columns:48px minmax(0,1fr);align-items:start}.episode-main,.movie-main{min-width:0}.choice-list{display:grid;gap:8px;margin-top:12px}.choice-row{display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px;align-items:center;padding:10px 12px;border:1px solid var(--line);border-radius:11px;background:#fbfcfa}.choice-row:has(input:checked){border-color:#79b497;background:#f3faf5}.choice-select{display:flex;align-items:center;gap:7px;color:#45534b;font-size:12px;font-weight:700;white-space:nowrap}.choice-select input{width:17px;height:17px;margin:0;accent-color:var(--green)}.choice-copy{min-width:0}.choice-copy .release{margin:0}.choice-copy .episode-meta,.choice-copy .movie-meta{margin-top:5px}.selection-bar{position:fixed;z-index:4;left:50%;bottom:18px;display:flex;align-items:center;gap:16px;width:min(700px,calc(100% - 28px));padding:13px 15px;transform:translateX(-50%);border:1px solid #dbe5dc;border-radius:15px;background:#fffffff2;box-shadow:0 12px 40px #10211730;backdrop-filter:blur(12px)}.selection-info{flex:1;min-width:0}.selection-title{font-weight:750}.selection-detail{color:var(--muted);font-size:12px}.selection-actions{display:flex;gap:8px}.selection-bar .button.small{white-space:nowrap}@media(max-width:650px){.episode,.movie{grid-template-columns:42px minmax(0,1fr);gap:10px;padding:12px}.episode-number,.movie-number{width:38px;height:38px}.selection-bar{bottom:10px;gap:8px;padding:10px}.selection-bar .button.small{padding:0 9px;font-size:12px}.selection-detail{max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
 </style>
 </head>
 <body>
 <main class="shell">
   <div class="brand"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M7 4.8a1 1 0 0 1 1.52-.85l10.1 6.2a2.15 2.15 0 0 1 0 3.68l-10.1 6.2A1 1 0 0 1 7 19.18V4.8Z" fill="currentColor"/></svg></span><span>RD Media Downloader</span></div>
-  <header><div class="eyebrow">Your library, organized</div><h1>Pick a release.<br>We’ll handle the rest.</h1><p class="intro">Find the highest-seeder match for every episode in a season, or browse movie releases. Downloads stay under your control.</p></header>
+  <header><div class="eyebrow">Your library, organized</div><h1>Pick releases.<br>Send them together.</h1><p class="intro">Choose from the top two matches per TV episode, or check movie releases. Send selected downloads to Real-Debrid in one batch.</p></header>
 
   <nav class="tabs" aria-label="Media type">
     <button class="tab active" id="tv-tab" type="button" aria-selected="true">TV shows</button>
@@ -28,7 +30,7 @@
         <label>Season<input id="season" type="number" min="1" max="100" value="1" required></label>
         <button class="button" id="tv-search" type="submit">Find episodes <span aria-hidden="true">→</span></button>
       </div>
-      <p class="help">Shows one top-seeder candidate per episode. Downloads go to <code>TV / Show / S01</code>.</p>
+      <p class="help">Choose from the top two reported-seeder releases per episode. Downloads go to <code>TV / Show / S01</code>.</p>
     </form>
   </section>
 
@@ -49,31 +51,29 @@
     <div class="movies" id="movies"></div>
   </section>
 </main>
-
-<dialog id="download-dialog">
-  <form class="dialog-body" id="download-form">
-    <h2>Send to Real-Debrid</h2><p id="download-description"></p>
-    <div class="path-preview" id="path-preview"></div>
-    <div class="dialog-actions"><button class="button secondary" id="cancel-download" type="button">Cancel</button><button class="button" id="confirm-download" type="submit">Download</button></div>
-  </form>
-</dialog>
+<aside class="selection-bar" id="selection-bar" hidden aria-live="polite">
+  <div class="selection-info"><div class="selection-title" id="selection-count">0 selected</div><div class="selection-detail" id="selection-detail">Choose releases to send to Real-Debrid</div></div>
+  <div class="selection-actions"><button class="button secondary small" id="clear-selection" type="button">Clear</button><button class="button small" id="send-selected" type="button">Send selected to RD</button></div>
+</aside>
 
 <script>
 let episodeResults = [];
 let movieResults = [];
-let selectedDownload = null;
-let activeMedia = 'tv';
+let seriesTitle = '';
+let movieTitle = '';
+let selected = new Map();
+let currentJob = null;
 const statusEl = document.getElementById('status');
 const resultsSection = document.getElementById('results');
-const dialog = document.getElementById('download-dialog');
 
 document.getElementById('tv-tab').addEventListener('click', () => selectPanel('tv'));
 document.getElementById('movie-tab').addEventListener('click', () => selectPanel('movie'));
 document.getElementById('tv-form').addEventListener('submit', event => { event.preventDefault(); discoverSeason(); });
 document.getElementById('movie-form').addEventListener('submit', event => { event.preventDefault(); discoverMovie(); });
+document.getElementById('clear-selection').addEventListener('click', clearSelection);
+document.getElementById('send-selected').addEventListener('click', sendSelected);
 
 function selectPanel(media) {
-  activeMedia = media;
   document.getElementById('tv-tab').classList.toggle('active', media === 'tv');
   document.getElementById('movie-tab').classList.toggle('active', media === 'movie');
   document.getElementById('tv-tab').setAttribute('aria-selected', String(media === 'tv'));
@@ -81,6 +81,7 @@ function selectPanel(media) {
   document.getElementById('tv-panel').hidden = media !== 'tv';
   document.getElementById('movie-panel').hidden = media !== 'movie';
   resultsSection.hidden = true;
+  clearSelection();
   setStatus('');
 }
 
@@ -94,15 +95,16 @@ async function discoverSeason() {
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || 'Season search failed.');
     episodeResults = data.episodes;
+    seriesTitle = data.series_title;
     document.getElementById('result-heading').textContent = `${data.series_title} · Season ${season}`;
-    document.getElementById('result-subtitle').textContent = 'One top-seeder candidate per episode';
+    document.getElementById('result-subtitle').textContent = 'Choose one of the two highest-seeder releases per episode';
     document.getElementById('result-count').textContent = `${episodeResults.length} episodes`;
     renderEpisodes(season);
     document.getElementById('movies').replaceChildren();
     document.getElementById('episodes').hidden = false;
     document.getElementById('movies').hidden = true;
     resultsSection.hidden = false;
-    const found = episodeResults.filter(item => item.best).length;
+    const found = episodeResults.filter(item => item.choices?.length).length;
     setStatus(`Found a candidate for ${found} of ${episodeResults.length} episodes.`, found ? 'success' : '');
   } catch (error) { setStatus(error.message || 'Season search failed.', 'error'); }
   finally { endSearch(button, 'Find episodes'); }
@@ -117,6 +119,7 @@ async function discoverMovie() {
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || 'Movie search failed.');
     movieResults = data.streams;
+    movieTitle = data.movie_title;
     document.getElementById('result-heading').textContent = data.movie_title;
     document.getElementById('result-subtitle').textContent = 'Releases ranked by reported seeders';
     document.getElementById('result-count').textContent = `${movieResults.length} releases`;
@@ -131,6 +134,7 @@ async function discoverMovie() {
 }
 
 function beginSearch(button, message, label) {
+  clearSelection();
   resultsSection.hidden = true;
   setStatus(message);
   button.disabled = true;
@@ -153,14 +157,20 @@ function renderEpisodes(season) {
     const card = document.createElement('article');
     card.className = 'episode';
     const code = `S${String(season).padStart(2, '0')}E${String(item.episode).padStart(2, '0')}`;
-    if (!item.best) {
-      card.innerHTML = `<div class="episode-number">${escapeHtml(String(item.episode).padStart(2, '0'))}</div><div><p class="episode-title">${escapeHtml(item.title)}</p><p class="release">${code}</p></div><span class="no-result">${escapeHtml(item.error || 'No Torrentio matches')}</span>`;
+    if (!item.choices?.length) {
+      card.innerHTML = `<div class="episode-number">${escapeHtml(String(item.episode).padStart(2, '0'))}</div><div class="episode-main"><p class="episode-title">${escapeHtml(item.title)}</p><p class="release">${code}</p><div class="no-result">${escapeHtml(item.error || 'No Torrentio matches')}</div></div>`;
     } else {
-      const best = item.best;
-      const seedBadge = best.seeders < 0 ? '<span class="badge neutral">Seed count unavailable</span>' : `<span class="badge">${best.seeders.toLocaleString()} seeds</span>`;
-      const resolution = best.resolution ? `<span class="badge neutral">${escapeHtml(best.resolution)}</span>` : '';
-      card.innerHTML = `<div class="episode-number">${String(item.episode).padStart(2, '0')}</div><div><p class="episode-title">${escapeHtml(item.title)}</p><p class="release">${escapeHtml(best.name || best.title || 'Torrentio release')}</p><div class="episode-meta">${seedBadge}${resolution}</div></div><button class="button small" type="button">Choose release</button>`;
-      card.querySelector('button').addEventListener('click', () => openDownload('tv', index, code));
+      const choices = item.choices.map((candidate, choiceIndex) => choiceMarkup(candidate, `tv:${item.episode}:${choiceIndex}`, choiceIndex ? 'Next best' : 'Top match', 'episode-meta')).join('');
+      card.innerHTML = `<div class="episode-number">${String(item.episode).padStart(2, '0')}</div><div class="episode-main"><p class="episode-title">${escapeHtml(item.title)}</p><p class="release">${code}</p><div class="choice-list">${choices}</div></div>`;
+      card.querySelectorAll('input[type=checkbox]').forEach((checkbox, choiceIndex) => {
+        checkbox.addEventListener('change', () => toggleSelection(checkbox, {
+          magnet: item.choices[choiceIndex].magnet,
+          media_type: 'tv',
+          title: seriesTitle,
+          season,
+          display: `${code} · ${item.title}`,
+        }, `tv:${item.episode}:`));
+      });
     }
     list.append(card);
   });
@@ -176,45 +186,103 @@ function renderMovies() {
   movieResults.forEach((item, index) => {
     const card = document.createElement('article');
     card.className = 'movie';
-    const seedBadge = item.seeders < 0 ? '<span class="badge neutral">Seed count unavailable</span>' : `<span class="badge">${item.seeders.toLocaleString()} seeds</span>`;
-    const resolution = item.resolution ? `<span class="badge neutral">${escapeHtml(item.resolution)}</span>` : '';
-    card.innerHTML = `<div class="movie-number">${String(index + 1).padStart(2, '0')}</div><div><p class="movie-title">${escapeHtml(item.name || item.title || `Release ${index + 1}`)}</p><div class="movie-meta">${seedBadge}${resolution}</div></div><button class="button small" type="button">Choose release</button>`;
-    card.querySelector('button').addEventListener('click', () => openDownload('movies', index));
+    card.innerHTML = `<div class="movie-number">${String(index + 1).padStart(2, '0')}</div><div class="movie-main">${choiceMarkup(item, `movie:${index}`, 'Select release', 'movie-meta')}</div>`;
+    card.querySelector('input[type=checkbox]').addEventListener('change', event => toggleSelection(event.currentTarget, {
+      magnet: item.magnet,
+      media_type: 'movies',
+      title: movieTitle,
+      display: `${movieTitle} · ${item.name || item.title || `Release ${index + 1}`}`,
+    }));
     list.append(card);
   });
 }
 
-function openDownload(media, index, episodeCode = '') {
-  activeMedia = media;
-  selectedDownload = media === 'tv' ? episodeResults[index] : movieResults[index];
-  const title = media === 'tv' ? document.getElementById('result-heading').textContent.split(' · ')[0] : document.getElementById('result-heading').textContent;
-  document.getElementById('download-description').textContent = media === 'tv' ? `${episodeCode} · ${selectedDownload.title}` : title;
-  document.getElementById('path-preview').textContent = media === 'tv'
-    ? `/media/tv/${title}/S${String(document.getElementById('season').value).padStart(2, '0')}`
-    : '/media/movies';
-  document.getElementById('confirm-download').textContent = media === 'tv' ? 'Download episode' : 'Download movie';
-  document.getElementById('confirm-download').disabled = false;
-  dialog.showModal();
+function choiceMarkup(item, key, label, metaClass) {
+  const seedBadge = item.seeders < 0 ? '<span class="badge neutral">Seeds unavailable</span>' : `<span class="badge">${item.seeders.toLocaleString()} seeds</span>`;
+  const resolution = item.resolution ? `<span class="badge neutral">${escapeHtml(item.resolution)}</span>` : '';
+  return `<label class="choice-row"><span class="choice-select"><input type="checkbox" data-key="${escapeHtml(key)}"><span>${escapeHtml(label)}</span></span><span class="choice-copy"><span class="release">${escapeHtml(item.name || item.title || 'Torrentio release')}</span><span class="${metaClass}">${seedBadge}${resolution}</span></span></label>`;
 }
 
-document.getElementById('cancel-download').addEventListener('click', () => dialog.close());
-document.getElementById('download-form').addEventListener('submit', async event => {
-  event.preventDefault();
-  const confirm = document.getElementById('confirm-download');
-  confirm.disabled = true;
-  confirm.innerHTML = `<span class="spin" aria-hidden="true"></span>Sending…`;
-  setStatus(`Sending ${activeMedia === 'tv' ? selectedDownload.title : 'movie'} to Real-Debrid…`);
-  const title = activeMedia === 'tv' ? document.getElementById('result-heading').textContent.split(' · ')[0] : document.getElementById('result-heading').textContent;
-  const season = activeMedia === 'tv' ? Number(document.getElementById('season').value) : undefined;
+function toggleSelection(checkbox, item, exclusivePrefix = null) {
+  const key = checkbox.dataset.key;
+  if (checkbox.checked) {
+    if (!selected.has(key) && selected.size >= 30) {
+      checkbox.checked = false;
+      setStatus('Send up to 30 releases at a time.', 'error');
+      return;
+    }
+    if (exclusivePrefix) {
+      for (const existingKey of selected.keys()) {
+        if (existingKey.startsWith(exclusivePrefix)) selected.delete(existingKey);
+      }
+      document.querySelectorAll('input[type=checkbox][data-key]').forEach(other => {
+        if (other !== checkbox && other.dataset.key.startsWith(exclusivePrefix)) other.checked = false;
+      });
+    }
+    selected.set(key, item);
+  } else {
+    selected.delete(key);
+  }
+  updateSelectionBar();
+}
+
+function clearSelection() {
+  selected.clear();
+  document.querySelectorAll('input[type=checkbox][data-key]').forEach(input => { input.checked = false; });
+  updateSelectionBar();
+}
+
+function updateSelectionBar(detail = 'Choose releases to send to Real-Debrid') {
+  const bar = document.getElementById('selection-bar');
+  bar.hidden = selected.size === 0 && !currentJob;
+  document.getElementById('selection-count').textContent = `${selected.size} selected`;
+  document.getElementById('selection-detail').textContent = detail;
+  const send = document.getElementById('send-selected');
+  send.disabled = selected.size === 0 || Boolean(currentJob);
+  send.textContent = currentJob ? 'Sending…' : 'Send selected to RD';
+}
+
+async function sendSelected() {
+  if (!selected.size || currentJob) return;
+  const payload = [...selected.values()].map(({display, ...download}) => ({...download, label: display}));
+  if (payload.length > 30) {
+    setStatus('Send up to 30 releases at a time.', 'error');
+    return;
+  }
+  currentJob = true;
+  updateSelectionBar(`Starting ${payload.length} downloads…`);
+  setStatus(`Sending ${payload.length} selected release${payload.length === 1 ? '' : 's'} to Real-Debrid…`);
   try {
-    const response = await fetch('/api/download', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({magnet:selectedDownload.best ? selectedDownload.best.magnet : selectedDownload.magnet,media_type:activeMedia,title,season})});
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.detail || 'Download failed.');
-    dialog.close();
-    setStatus(`Saved to ${data.destination}.`, 'success');
-  } catch (error) { setStatus(error.message || 'Download failed.', 'error'); }
-  finally { confirm.disabled = false; confirm.textContent = activeMedia === 'tv' ? 'Download episode' : 'Download movie'; }
-});
+    const response = await fetch('/api/download-batches', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({downloads:payload})});
+    const started = await response.json();
+    if (!response.ok) throw new Error(started.detail || 'Could not start batch.');
+    await pollBatch(started.job_id);
+  } catch (error) {
+    currentJob = null;
+    updateSelectionBar();
+    setStatus(error.message || 'Batch download failed.', 'error');
+  }
+}
+
+async function pollBatch(jobId) {
+  while (true) {
+    await new Promise(resolve => setTimeout(resolve, 2500));
+    const response = await fetch(`/api/download-batches/${encodeURIComponent(jobId)}`);
+    const job = await response.json();
+    if (!response.ok) throw new Error(job.detail || 'Could not read batch progress.');
+    updateSelectionBar(`${job.completed} complete · ${job.active} active · ${job.failed} failed of ${job.total}`);
+    setStatus(`Real-Debrid batch: ${job.completed} complete, ${job.active} active, ${job.failed} failed.`);
+    if (job.status === 'complete') {
+      const failed = job.items.filter(item => item.status === 'failed');
+      currentJob = null;
+      clearSelection();
+      setStatus(failed.length
+        ? `Batch finished: ${job.completed} complete, ${failed.length} failed. ${failed.map(item => `${item.title}: ${item.error}`).join(' · ')}`
+        : `Batch finished. ${job.completed} release${job.completed === 1 ? '' : 's'} downloaded to your library.`, failed.length ? 'error' : 'success');
+      return;
+    }
+  }
+}
 
 function setStatus(message, kind = '') { statusEl.textContent = message; statusEl.className = `status ${kind}`; }
 function escapeHtml(value) { return String(value).replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[char])); }

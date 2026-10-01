@@ -1,12 +1,12 @@
 # RD Media Downloader v2
 
 Uses the Stremio addon protocol to query a configured Torrentio endpoint. TV
-searches look up a season's episode list and show the top reported-seeder
-candidate for each episode. Movie searches show ranked candidates.
+searches look up a season's episode list and show the two top reported-seeder
+candidates for each episode. Movie searches show ranked candidates. Select
+multiple releases and send them together to Real-Debrid.
 
-The UI does **not** automatically submit the highest-ranked Torrentio result.
-You select a candidate, then the existing Real-Debrid downloader handles the
-magnet.
+The UI never submits releases automatically. You choose the release(s), then
+the Real-Debrid downloader processes your selection as an asynchronous batch.
 
 ## Layout
 
@@ -42,8 +42,15 @@ Open:
 http://SERVER-IP:8080
 ```
 
-The `/api/discover-season` endpoint returns one top candidate per episode.
+The `/api/discover-season` endpoint returns the two top candidates per episode.
 The `/api/discover-movie` endpoint returns ranked movie candidates.
-The `/api/download` endpoint accepts a magnet explicitly selected by the user
-and sends it through Real-Debrid. TV files are stored in a show folder and an
-`S01`-style season folder. Movie files are stored directly in `/media/movies`.
+The `/api/download-batches` endpoint starts selected downloads asynchronously;
+poll `/api/download-batches/{job_id}` for progress. Up to three downloads run
+concurrently. TV files are stored in a show folder and an `S01`-style season
+folder. Movie files are stored directly in `/media/movies`.
+
+Download progress is also written to the container logs:
+
+```bash
+docker compose logs -f rd-downloader
+```

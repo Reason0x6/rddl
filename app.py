@@ -1,6 +1,8 @@
 import asyncio
+import logging
 import os
 import re
+import uuid
 from pathlib import Path
 from typing import Literal
 
@@ -16,6 +18,13 @@ POLL = int(os.environ.get("POLL_SECONDS", "10"))
 TORRENTIO_URL = os.environ.get("TORRENTIO_URL", "").rstrip("/")
 
 app = FastAPI(title="RD Media Downloader", version="2.0.0")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+logger = logging.getLogger("rd_downloader")
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 class DownloadRequest(BaseModel):
@@ -23,6 +32,11 @@ class DownloadRequest(BaseModel):
     media_type: Literal["tv", "movies"]
     title: str | None = None
     season: int | None = Field(default=None, ge=1)
+    label: str | None = None
+
+
+class DownloadBatchRequest(BaseModel):
+    downloads: list[DownloadRequest] = Field(min_length=1, max_length=30)
 
 
 def safe_name(value: str) -> str:
@@ -263,14 +277,14 @@ async def discover_season(
                 return {
                     "episode": episode,
                     "title": video.get("name") or f"Episode {episode}",
-                    "best": candidates[0] if candidates else None,
+                    "choices": candidates[:2],
                     "candidate_count": len(candidates),
                 }
             except HTTPException as exc:
                 return {
                     "episode": episode,
                     "title": video.get("name") or f"Episode {episode}",
-                    "best": None,
+                    "choices": [],
                     "candidate_count": 0,
                     "error": exc.detail,
                 }
@@ -332,14 +346,19 @@ async def download(req: DownloadRequest):
     if not TOKEN:
         raise HTTPException(503, "REAL_DEBRID_TOKEN is not configured")
 
+    logger.info("download started media_type=%s title=%r", req.media_type, req.title)
+
     async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
         r = await rd_post(client, "/torrents/addMagnet", {"magnet": req.magnet})
         torrent_id = r.json()["id"]
+        logger.info("Real-Debrid accepted torrent_id=%s", torrent_id)
 
         info = None
         for _ in range(180):
             info = (await rd_get(client, f"/torrents/info/{torrent_id}")).json()
             if info.get("files"):
+                logger.info("torrent files ready torrent_id=%s count=%s",
+                            torrent_id, len(info["files"]))
                 break
             if info.get("status") in ("error", "dead", "virus", "magnet_error"):
                 raise HTTPException(502, f"Real-Debrid failed: {info.get('status')}")
@@ -352,9 +371,14 @@ async def download(req: DownloadRequest):
         await rd_post(client, f"/torrents/selectFiles/{torrent_id}",
                       {"files": file_ids})
 
+        last_status = None
         for _ in range(720):
             info = (await rd_get(client, f"/torrents/info/{torrent_id}")).json()
             status = info.get("status")
+            if status != last_status:
+                logger.info("torrent status changed torrent_id=%s status=%s",
+                            torrent_id, status)
+                last_status = status
             if status == "downloaded":
                 break
             if status in ("error", "dead", "virus", "magnet_error"):
@@ -402,9 +426,86 @@ async def download(req: DownloadRequest):
 
             downloaded.append(str(target))
 
-        return {
+        result = {
             "torrent_id": torrent_id,
             "status": "downloaded",
             "destination": str(target_dir),
             "files": downloaded,
         }
+        logger.info("download complete torrent_id=%s destination=%s files=%s",
+                    torrent_id, target_dir, len(downloaded))
+        return result
+
+
+download_jobs = {}
+download_tasks = {}
+
+
+async def run_download_job(job_id: str, requests: list[DownloadRequest]):
+    job = download_jobs[job_id]
+    job["status"] = "running"
+    logger.info("download batch started job_id=%s selections=%s",
+                job_id, len(requests))
+    semaphore = asyncio.Semaphore(3)
+
+    async def process(index: int, request: DownloadRequest):
+        item = job["items"][index]
+        async with semaphore:
+            item["status"] = "downloading"
+            logger.info("batch item started job_id=%s item=%s title=%r",
+                        job_id, index + 1, request.label or request.title)
+            try:
+                result = await download(request)
+                item.update({"status": "complete", "result": result})
+                job["completed"] += 1
+                logger.info("batch item completed job_id=%s item=%s torrent_id=%s",
+                            job_id, index + 1, result.get("torrent_id"))
+            except HTTPException as exc:
+                item.update({"status": "failed", "error": exc.detail})
+                job["failed"] += 1
+                logger.error("batch item failed job_id=%s item=%s error=%s",
+                             job_id, index + 1, exc.detail)
+            except Exception:
+                item.update({"status": "failed", "error": "Unexpected download error"})
+                job["failed"] += 1
+                logger.exception("batch item failed unexpectedly job_id=%s item=%s",
+                                 job_id, index + 1)
+
+    await asyncio.gather(*(process(index, request) for index, request in enumerate(requests)))
+    job["status"] = "complete"
+    logger.info("download batch complete job_id=%s completed=%s failed=%s",
+                job_id, job["completed"], job["failed"])
+
+
+@app.post("/api/download-batches", status_code=202)
+async def create_download_batch(batch: DownloadBatchRequest):
+    if not TOKEN:
+        raise HTTPException(503, "REAL_DEBRID_TOKEN is not configured")
+
+    job_id = uuid.uuid4().hex
+    download_jobs[job_id] = {
+        "id": job_id,
+        "status": "queued",
+        "total": len(batch.downloads),
+        "completed": 0,
+        "failed": 0,
+        "items": [
+            {"index": i, "title": item.label or item.title or f"Selection {i + 1}", "status": "queued"}
+            for i, item in enumerate(batch.downloads)
+        ],
+    }
+    download_tasks[job_id] = asyncio.create_task(
+        run_download_job(job_id, batch.downloads)
+    )
+    logger.info("download batch queued job_id=%s selections=%s",
+                job_id, len(batch.downloads))
+    return {"job_id": job_id, "status": "queued", "total": len(batch.downloads)}
+
+
+@app.get("/api/download-batches/{job_id}")
+async def get_download_batch(job_id: str):
+    job = download_jobs.get(job_id)
+    if job is None:
+        raise HTTPException(404, "Download batch not found")
+    active = sum(item["status"] == "downloading" for item in job["items"])
+    return {**job, "active": active}
