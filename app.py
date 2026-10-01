@@ -938,44 +938,51 @@ async def rd_get(client, path, params=None):
 async def download_direct_link(client, url, target, progress_callback=None):
     if progress_callback:
         progress_callback("Downloading video file", 0, f"{target.name} · starting")
-    for attempt in range(1, RD_REQUEST_ATTEMPTS + 1):
+    try:
+        for attempt in range(1, RD_REQUEST_ATTEMPTS + 1):
+            try:
+                async with client.stream("GET", url) as response:
+                    status = response.status_code
+                    retryable = status in RETRYABLE_HTTP_STATUSES or status >= 500
+                    if status >= 400:
+                        if retryable and attempt < RD_REQUEST_ATTEMPTS:
+                            logger.warning("direct download returned HTTP %s attempt=%s/%s",
+                                           status, attempt, RD_REQUEST_ATTEMPTS)
+                            await asyncio.sleep(attempt)
+                            continue
+                        raise HTTPException(status, f"File download returned HTTP {status}")
+                    total_bytes = int(response.headers.get("content-length") or 0)
+                    downloaded_bytes = 0
+                    last_report = 0.0
+                    with target.open("wb") as output:
+                        async for chunk in response.aiter_bytes(1024 * 1024):
+                            output.write(chunk)
+                            downloaded_bytes += len(chunk)
+                            now = time.monotonic()
+                            if progress_callback and (now - last_report >= 2 or
+                                                      total_bytes and downloaded_bytes >= total_bytes):
+                                percent = round(downloaded_bytes * 100 / total_bytes, 1) if total_bytes else None
+                                progress_callback(
+                                    "Downloading video file", percent,
+                                    f"{target.name} · {downloaded_bytes // (1024 * 1024)} MB" +
+                                    (f" of {total_bytes // (1024 * 1024)} MB" if total_bytes else ""),
+                                )
+                                last_report = now
+                return
+            except httpx.RequestError as exc:
+                if attempt == RD_REQUEST_ATTEMPTS:
+                    raise HTTPException(
+                        502, f"File download failed after {attempt} attempts"
+                    ) from exc
+                logger.warning("direct download network error attempt=%s/%s",
+                               attempt, RD_REQUEST_ATTEMPTS)
+                await asyncio.sleep(attempt)
+    except asyncio.CancelledError:
         try:
-            async with client.stream("GET", url) as response:
-                status = response.status_code
-                retryable = status in RETRYABLE_HTTP_STATUSES or status >= 500
-                if status >= 400:
-                    if retryable and attempt < RD_REQUEST_ATTEMPTS:
-                        logger.warning("direct download returned HTTP %s attempt=%s/%s",
-                                       status, attempt, RD_REQUEST_ATTEMPTS)
-                        await asyncio.sleep(attempt)
-                        continue
-                    raise HTTPException(status, f"File download returned HTTP {status}")
-                total_bytes = int(response.headers.get("content-length") or 0)
-                downloaded_bytes = 0
-                last_report = 0.0
-                with target.open("wb") as output:
-                    async for chunk in response.aiter_bytes(1024 * 1024):
-                        output.write(chunk)
-                        downloaded_bytes += len(chunk)
-                        now = time.monotonic()
-                        if progress_callback and (now - last_report >= 2 or
-                                                  total_bytes and downloaded_bytes >= total_bytes):
-                            percent = round(downloaded_bytes * 100 / total_bytes, 1) if total_bytes else None
-                            progress_callback(
-                                "Downloading video file", percent,
-                                f"{target.name} · {downloaded_bytes // (1024 * 1024)} MB" +
-                                (f" of {total_bytes // (1024 * 1024)} MB" if total_bytes else ""),
-                            )
-                            last_report = now
-            return
-        except httpx.RequestError as exc:
-            if attempt == RD_REQUEST_ATTEMPTS:
-                raise HTTPException(
-                    502, f"File download failed after {attempt} attempts"
-                ) from exc
-            logger.warning("direct download network error attempt=%s/%s",
-                           attempt, RD_REQUEST_ATTEMPTS)
-            await asyncio.sleep(attempt)
+            target.unlink(missing_ok=True)
+        except OSError:
+            logger.warning("could not remove partial file after cancellation path=%s", target)
+        raise
 
 
 def magnet_info_hash(magnet: str) -> str | None:
@@ -1341,6 +1348,70 @@ async def list_download_batches():
     ]}
 
 
+@app.post("/api/downloads/stop-all")
+async def stop_all_downloads(request: Request):
+    require_admin(request)
+    pending_jobs = {
+        job_id: job for job_id, job in download_jobs.items()
+        if any(item.get("status") in {"queued", "downloading"}
+               for item in job.get("items", []))
+    }
+    tasks = []
+    for job_id in pending_jobs:
+        task = download_tasks.get(job_id)
+        if task and not task.done():
+            task.cancel()
+            tasks.append(task)
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    stopped = 0
+    for job_id, job in pending_jobs.items():
+        stopped_in_job = 0
+        for item in job.get("items", []):
+            if item.get("status") not in {"queued", "downloading"}:
+                continue
+            item.update({
+                "status": "cancelled",
+                "stage": "Stopped",
+                "detail": "Stopped by admin",
+                "progress": None,
+            })
+            item.pop("error", None)
+            stopped += 1
+            stopped_in_job += 1
+        job["cancelled"] = job.get("cancelled", 0) + stopped_in_job
+        job["status"] = "complete"
+        save_download_job(job_id)
+        download_tasks.pop(job_id, None)
+    logger.warning("active downloads stopped by admin username=%s selections=%s",
+                   request.state.username, stopped)
+    return {"stopped": stopped}
+
+
+@app.delete("/api/downloads/history")
+async def clear_download_history(request: Request):
+    require_admin(request)
+    removable = [
+        job_id for job_id, job in download_jobs.items()
+        if all(item.get("status") not in {"queued", "downloading"}
+               for item in job.get("items", []))
+    ]
+    if removable:
+        with sqlite3.connect(DOWNLOAD_DB) as db:
+            db.executemany(
+                "DELETE FROM download_batches WHERE job_id=?",
+                ((job_id,) for job_id in removable),
+            )
+        for job_id in removable:
+            download_jobs.pop(job_id, None)
+            download_requests.pop(job_id, None)
+            download_tasks.pop(job_id, None)
+    logger.info("download history cleared by admin username=%s batches=%s",
+                request.state.username, len(removable))
+    return {"cleared": len(removable)}
+
+
 def destination_folder_info(path: Path, current_files: set[str] | None = None) -> dict:
     current_files = current_files or set()
     files = []
@@ -1394,7 +1465,7 @@ async def current_downloads():
             requests = download_requests.get(job_id, [])
             candidates = [
                 (item, requests[index]) for index, item in enumerate(job.get("items", []))
-                if index < len(requests) and item.get("status") in {"complete", "failed"}
+                if index < len(requests) and item.get("status") in {"complete", "failed", "cancelled"}
             ]
             candidates.sort(key=lambda pair: pair[0].get("status") == "complete", reverse=True)
             if candidates:

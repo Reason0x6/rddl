@@ -43,7 +43,7 @@ html{scroll-behavior:smooth}body{position:relative;overflow-x:hidden;background:
 @media(max-width:850px){.shell{width:min(100% - 36px,700px)}.topbar{grid-template-columns:1fr auto;gap:12px}.page-tabs{grid-column:1/-1;grid-row:2;justify-self:stretch;justify-content:center;overflow-x:auto}.brand{grid-column:1;grid-row:1}.top-action{grid-column:2;grid-row:1}.hero{grid-template-columns:1fr minmax(260px,.78fr);min-height:470px;gap:0}.hero-art{min-height:370px}.hero h1{font-size:clamp(48px,8vw,70px)}.page-tabs .tab{padding:8px 11px}}
 @media(max-width:600px){.shell{width:calc(100% - 28px);padding-top:14px}.topbar{gap:9px}.brand{font-size:12px}.brand-mark{width:31px;height:31px}.page-tabs{justify-content:flex-start;width:100%;scrollbar-width:none}.page-tabs::-webkit-scrollbar{display:none}.page-tabs .tab{flex:0 0 auto;font-size:11px}.hero{grid-template-columns:1fr;min-height:0;padding:55px 0 28px}.hero-copy{padding:0}.hero h1{margin:18px 0 14px;font-size:clamp(48px,14vw,72px)}.hero .intro{font-size:14px}.hero-footnote{margin-top:25px}.hero-art{min-height:300px;margin-top:5px}.art-caption{right:3%;bottom:0}.hero-object{width:min(100%,410px)}.section-head{flex-direction:row;align-items:center}.section-head h2{font-size:19px}.section-head p{max-width:240px}.search-card{padding:15px}.fields,.fields.movie{grid-template-columns:1fr}.fields .button{grid-column:auto}.request-fields{grid-template-columns:1fr 1fr}.live-download-layout{grid-template-columns:1fr}.live-download-panel{padding:14px}.site-footer{align-items:flex-start;flex-wrap:wrap;margin-top:45px}.site-footer nav{order:3;width:100%;justify-content:flex-start}.footer-status{margin-left:auto}.selection-bar{width:calc(100% - 18px)}}
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
-body{isolation:isolate}.float-spark{animation:spark-glow 3.4s ease-in-out infinite alternate}.spark-b{animation-delay:.8s}.spark-c{animation-delay:1.6s}@keyframes spark-glow{from{opacity:.42;transform:translateY(2px) scale(.8)}to{opacity:1;transform:translateY(-4px) scale(1.2)}}
+body{isolation:isolate}.float-spark{animation:spark-glow 3.4s ease-in-out infinite alternate}.spark-b{animation-delay:.8s}.spark-c{animation-delay:1.6s}@keyframes spark-glow{from{opacity:.42;transform:translateY(2px) scale(.8)}to{opacity:1;transform:translateY(-4px) scale(1.2)}}.download-page-actions{display:flex;align-items:center;gap:8px}.download-page-actions .button.danger{border-color:#bd6248;color:#ffb09b;background:#20110e}.download-page-actions .button.danger:hover{border-color:#ff9c7e;color:#ffd0c3;background:#35150f}.downloads-page>.section-head{flex-wrap:wrap}.download-page-actions{margin-left:auto}@media(max-width:600px){.download-page-actions{width:100%;margin-left:0;flex-wrap:wrap}.download-page-actions .button{flex:1}}
 </style>
 </head>
 <body>
@@ -127,7 +127,7 @@ body{isolation:isolate}.float-spark{animation:spark-glow 3.4s ease-in-out infini
   </section>
 
   <section class="downloads-page" id="downloads-panel" hidden>
-    <div class="section-head"><div><h2>Downloads</h2><p>See the file currently transferring and what is already in its destination folder.</p></div><button class="button secondary small" id="refresh-downloads" type="button">Refresh</button></div>
+    <div class="section-head"><div><h2>Downloads</h2><p>See the file currently transferring and what is already in its destination folder.</p></div><div class="download-page-actions"><button class="button secondary small" id="clear-download-history" type="button">Clear history</button><button class="button danger small" id="stop-all-downloads" type="button">Stop all downloads</button><button class="button secondary small" id="refresh-downloads" type="button">Refresh</button></div></div>
     <div class="live-download-layout">
       <section class="live-download-panel"><h3>Currently downloading</h3><div class="current-download-list" id="current-download-list"></div></section>
       <section class="live-download-panel"><h3>Destination folder contents</h3><div class="destination-folder-list" id="destination-folder-list"></div></section>
@@ -193,6 +193,8 @@ document.getElementById('refresh-requests').addEventListener('click', loadReques
 document.getElementById('refresh-catalog').addEventListener('click', loadCatalog);
 document.getElementById('catalog-search').addEventListener('input', renderCatalogTable);
 document.getElementById('refresh-downloads').addEventListener('click', loadDownloadHistory);
+document.getElementById('stop-all-downloads').addEventListener('click', stopAllDownloads);
+document.getElementById('clear-download-history').addEventListener('click', clearDownloadHistory);
 document.getElementById('refresh-accounts').addEventListener('click', loadAccounts);
 document.getElementById('account-create-form').addEventListener('submit', createAccount);
 document.getElementById('hero-browse').addEventListener('click', () => {
@@ -525,6 +527,40 @@ async function loadDownloadHistory() {
   }
 }
 
+async function stopAllDownloads() {
+  if (!confirm('Stop all queued and active downloads? Partially downloaded local files will be removed. Existing torrents will remain in Real-Debrid.')) return;
+  const button = document.getElementById('stop-all-downloads');
+  button.disabled = true;
+  try {
+    const response = await fetch('/api/downloads/stop-all', {method:'POST'});
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || 'Could not stop downloads.');
+    await loadDownloadHistory();
+    setStatus(data.stopped ? `Stopped ${data.stopped} queued or active download${data.stopped === 1 ? '' : 's'}.` : 'There are no queued or active downloads.', 'success');
+  } catch (error) {
+    setStatus(error.message || 'Could not stop downloads.', 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function clearDownloadHistory() {
+  if (!confirm('Clear finished download history? Active downloads and files already in your media folders will be left alone.')) return;
+  const button = document.getElementById('clear-download-history');
+  button.disabled = true;
+  try {
+    const response = await fetch('/api/downloads/history', {method:'DELETE'});
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || 'Could not clear download history.');
+    await loadDownloadHistory();
+    setStatus(`Cleared ${data.cleared} finished download record${data.cleared === 1 ? '' : 's'}. Media files were left untouched.`, 'success');
+  } catch (error) {
+    setStatus(error.message || 'Could not clear download history.', 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function renderCurrentDownloads(data) {
   const currentList = document.getElementById('current-download-list');
   const folderList = document.getElementById('destination-folder-list');
@@ -771,11 +807,14 @@ async function pollBatch(jobId) {
     setStatus(`Real-Debrid batch: ${job.completed} complete, ${job.active} active, ${job.failed} failed.`);
     if (job.status === 'complete') {
       const failed = job.items.filter(item => item.status === 'failed');
+      const cancelled = job.items.filter(item => item.status === 'cancelled');
       currentJob = null;
       clearSelection();
       setStatus(failed.length
         ? `Batch finished: ${job.completed} complete, ${failed.length} failed. ${failed.map(item => `${item.title}: ${item.error}`).join(' · ')}`
-        : `Batch finished. ${job.completed} release${job.completed === 1 ? '' : 's'} downloaded to your library.`, failed.length ? 'error' : 'success');
+        : cancelled.length
+          ? `Batch stopped: ${job.completed} complete, ${cancelled.length} stopped.`
+          : `Batch finished. ${job.completed} release${job.completed === 1 ? '' : 's'} downloaded to your library.`, failed.length ? 'error' : 'success');
       return;
     }
   }
@@ -788,7 +827,7 @@ function updateDownloadStatuses(items) {
     if (!badge) continue;
     badge.hidden = false;
     badge.className = `download-status ${item.status}`;
-    const labels = {queued: 'Queued', downloading: 'Downloading', complete: 'Complete', failed: 'Failed'};
+    const labels = {queued: 'Queued', downloading: 'Downloading', complete: 'Complete', failed: 'Failed', cancelled: 'Stopped'};
     badge.textContent = item.status === 'failed' && item.error
       ? `Failed: ${item.error}`
       : (labels[item.status] || item.status);
