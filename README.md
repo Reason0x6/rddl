@@ -60,9 +60,12 @@ episode counts.
 The Requests page searches Cinemeta/IMDb titles and stores requests in SQLite
 under `/data/requests.sqlite3`.
 The `/api/download-batches` endpoint starts selected downloads asynchronously;
-poll `/api/download-batches/{job_id}` for progress. Up to three downloads run
-concurrently. TV files are stored in a show folder and an `S01`-style season
-folder. Movie files are stored directly in `/media/Movies`.
+the Downloads page lists saved batches and refreshes active status automatically.
+Batch state is stored in `/data/downloads.sqlite3`; queued work resumes after an
+app restart. Poll `/api/download-batches/{job_id}` for an individual batch.
+Up to three downloads run concurrently. TV files are stored in a show folder
+and an `S01`-style season folder. Movie files are stored directly in
+`/media/Movies`.
 
 Download progress is also written to the container logs:
 

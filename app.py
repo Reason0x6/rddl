@@ -27,6 +27,7 @@ POLL = int(os.environ.get("POLL_SECONDS", "10"))
 TORRENTIO_URL = os.environ.get("TORRENTIO_URL", "").rstrip("/")
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 REQUEST_DB = DATA_DIR / "requests.sqlite3"
+DOWNLOAD_DB = DATA_DIR / "downloads.sqlite3"
 AUTH_STATE_FILE = DATA_DIR / "auth.json"
 AUTH_USERS_FILE = DATA_DIR / "users.json"
 SESSION_KEY_FILE = DATA_DIR / "session.key"
@@ -154,6 +155,19 @@ def init_request_db():
 
 
 init_request_db()
+
+
+def init_download_db():
+    with sqlite3.connect(DOWNLOAD_DB) as db:
+        db.execute("""CREATE TABLE IF NOT EXISTS download_batches (
+            job_id TEXT PRIMARY KEY,
+            job_json TEXT NOT NULL,
+            requests_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )""")
+
+
+init_download_db()
 
 SESSION_COOKIE = "rd_session"
 SESSION_TTL = 12 * 60 * 60
@@ -992,41 +1006,91 @@ async def download_locked(req: DownloadRequest, info_hash: str | None):
 
 
 download_jobs = {}
+download_requests = {}
 download_tasks = {}
+
+
+def save_download_job(job_id: str):
+    job = download_jobs[job_id]
+    job["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    with sqlite3.connect(DOWNLOAD_DB) as db:
+        db.execute(
+            "INSERT INTO download_batches (job_id, job_json, requests_json, updated_at) "
+            "VALUES (?, ?, ?, ?) ON CONFLICT(job_id) DO UPDATE SET "
+            "job_json=excluded.job_json, requests_json=excluded.requests_json, updated_at=excluded.updated_at",
+            (job_id, json.dumps(job),
+             json.dumps([item.model_dump() for item in download_requests[job_id]]),
+             job["updated_at"]),
+        )
+
+
+@app.on_event("startup")
+async def restore_download_jobs():
+    with sqlite3.connect(DOWNLOAD_DB) as db:
+        rows = db.execute(
+            "SELECT job_id, job_json, requests_json FROM download_batches "
+            "ORDER BY updated_at DESC"
+        ).fetchall()
+    for job_id, job_json, requests_json in rows:
+        job = json.loads(job_json)
+        requests = [DownloadRequest(**item) for item in json.loads(requests_json)]
+        download_jobs[job_id] = job
+        download_requests[job_id] = requests
+        unfinished = False
+        for item in job["items"]:
+            if item["status"] == "downloading":
+                item["status"] = "queued"
+            if item["status"] == "queued":
+                unfinished = True
+        if unfinished:
+            job["status"] = "queued"
+            save_download_job(job_id)
+            download_tasks[job_id] = asyncio.create_task(run_download_job(job_id, requests))
+        elif job["status"] != "complete":
+            job["status"] = "complete"
+            save_download_job(job_id)
 
 
 async def run_download_job(job_id: str, requests: list[DownloadRequest]):
     job = download_jobs[job_id]
     job["status"] = "running"
+    save_download_job(job_id)
     logger.info("download batch started job_id=%s selections=%s",
                 job_id, len(requests))
     semaphore = asyncio.Semaphore(3)
 
     async def process(index: int, request: DownloadRequest):
         item = job["items"][index]
+        if item["status"] in {"complete", "failed"}:
+            return
         async with semaphore:
             item["status"] = "downloading"
+            save_download_job(job_id)
             logger.info("batch item started job_id=%s item=%s title=%r",
                         job_id, index + 1, request.label or request.title)
             try:
                 result = await download(request)
                 item.update({"status": "complete", "result": result})
                 job["completed"] += 1
+                save_download_job(job_id)
                 logger.info("batch item completed job_id=%s item=%s torrent_id=%s",
                             job_id, index + 1, result.get("torrent_id"))
             except HTTPException as exc:
                 item.update({"status": "failed", "error": exc.detail})
                 job["failed"] += 1
+                save_download_job(job_id)
                 logger.error("batch item failed job_id=%s item=%s error=%s",
                              job_id, index + 1, exc.detail)
             except Exception:
                 item.update({"status": "failed", "error": "Unexpected download error"})
                 job["failed"] += 1
+                save_download_job(job_id)
                 logger.exception("batch item failed unexpectedly job_id=%s item=%s",
                                  job_id, index + 1)
 
     await asyncio.gather(*(process(index, request) for index, request in enumerate(requests)))
     job["status"] = "complete"
+    save_download_job(job_id)
     logger.info("download batch complete job_id=%s completed=%s failed=%s",
                 job_id, job["completed"], job["failed"])
 
@@ -1037,12 +1101,15 @@ async def create_download_batch(batch: DownloadBatchRequest):
         raise HTTPException(503, "REAL_DEBRID_TOKEN is not configured")
 
     job_id = uuid.uuid4().hex
+    download_requests[job_id] = batch.downloads
     download_jobs[job_id] = {
         "id": job_id,
         "status": "queued",
         "total": len(batch.downloads),
         "completed": 0,
         "failed": 0,
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "items": [
             {
                 "index": i,
@@ -1053,12 +1120,22 @@ async def create_download_batch(batch: DownloadBatchRequest):
             for i, item in enumerate(batch.downloads)
         ],
     }
+    save_download_job(job_id)
     download_tasks[job_id] = asyncio.create_task(
         run_download_job(job_id, batch.downloads)
     )
     logger.info("download batch queued job_id=%s selections=%s",
                 job_id, len(batch.downloads))
     return {"job_id": job_id, "status": "queued", "total": len(batch.downloads)}
+
+
+@app.get("/api/download-batches")
+async def list_download_batches():
+    jobs = sorted(download_jobs.values(), key=lambda job: job.get("created_at", ""), reverse=True)
+    return {"jobs": [
+        {**job, "active": sum(item["status"] == "downloading" for item in job["items"])}
+        for job in jobs[:500]
+    ]}
 
 
 @app.get("/api/download-batches/{job_id}")

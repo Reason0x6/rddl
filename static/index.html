@@ -15,6 +15,7 @@
 </style>
 <style>
 .catalog-summary{display:flex;flex-wrap:wrap;gap:10px}.catalog-stat{padding:9px 13px;border:1px solid var(--line);border-radius:11px;background:var(--paper);color:var(--muted);font-size:13px}.catalog-stat strong{margin-right:4px;color:var(--ink);font-size:16px}.catalog-list{display:grid;gap:10px}.catalog-item{padding:15px 17px;border:1px solid var(--line);border-radius:14px;background:var(--paper)}.catalog-item>strong{display:block;overflow-wrap:anywhere}.catalog-item p{margin:4px 0 0;color:var(--muted);font-size:12px;overflow-wrap:anywhere}.catalog-seasons{display:flex;flex-wrap:wrap;gap:7px;margin-top:9px}@media(max-width:650px){.page-tabs .tab{min-width:0;flex:1;padding:8px 7px;font-size:12px}.page-tabs .tab:last-child{margin-left:0}}
+.download-job-list{display:grid;gap:12px}.download-job-card{padding:17px;border:1px solid var(--line);border-radius:15px;background:var(--paper);box-shadow:0 4px 12px #172a1d08}.download-job-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}.download-job-head strong{overflow-wrap:anywhere}.download-job-time{margin-top:3px;color:var(--muted);font-size:12px}.download-job-state{padding:4px 10px;border-radius:99px;background:#eef2ee;color:#526158;font-size:12px;font-weight:700;text-transform:capitalize;white-space:nowrap}.download-job-state.running{background:var(--amber-pale);color:var(--amber)}.download-job-state.complete{background:var(--green-pale);color:var(--green-dark)}.download-job-items{display:grid;gap:8px;margin:13px 0 0;padding:0;list-style:none}.download-job-item{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px 12px;padding-top:9px;border-top:1px solid var(--line)}.download-job-item strong{overflow-wrap:anywhere}.download-item-state{font-size:12px;font-weight:700;text-transform:capitalize}.download-item-state.downloading{color:var(--amber)}.download-item-state.complete{color:var(--green-dark)}.download-item-state.failed{color:#a3342b}.download-item-detail{grid-column:1/-1;color:var(--muted);font-size:12px;overflow-wrap:anywhere}@media(max-width:650px){.download-job-card{padding:13px}.download-job-item{grid-template-columns:minmax(0,1fr) auto}}
 </style>
 </head>
 <body>
@@ -26,6 +27,7 @@
     <button class="tab active" id="download-page-tab" type="button" aria-selected="true">Downloader</button>
     <button class="tab" id="request-page-tab" type="button" aria-selected="false">Requests</button>
     <button class="tab" id="catalog-page-tab" type="button" aria-selected="false">Catalog</button>
+    <button class="tab" id="downloads-page-tab" type="button" aria-selected="false" hidden>Downloads</button>
     <button class="tab" id="logout-button" type="button">Sign out</button>
   </nav>
 
@@ -80,6 +82,11 @@
     <div class="catalog-list" id="catalog-shows"></div>
   </section>
 
+  <section class="downloads-page" id="downloads-panel" hidden>
+    <div class="section-head"><div><h2>Downloads</h2><p>Batch status updates automatically and stays available after refresh.</p></div><button class="button secondary small" id="refresh-downloads" type="button">Refresh</button></div>
+    <div class="download-job-list" id="download-job-list"></div>
+  </section>
+
   <div class="status" id="status" role="status" aria-live="polite"></div>
   <section id="results" hidden>
     <div class="section-head"><div><h2 id="result-heading">Results</h2><p id="result-subtitle"></p></div><div style="display:flex;align-items:center;gap:12px"><button class="button secondary small" id="select-top-seeds" type="button" hidden>Select all top seeds</button><div class="count" id="result-count"></div></div></div>
@@ -100,6 +107,8 @@ let seriesTitle = '';
 let movieTitle = '';
 let selected = new Map();
 let currentJob = null;
+let downloadHistoryTimer = null;
+let downloadHistoryLoading = false;
 const statusEl = document.getElementById('status');
 const resultsSection = document.getElementById('results');
 let currentRole = 'admin';
@@ -114,31 +123,38 @@ document.getElementById('select-top-seeds').addEventListener('click', selectTopS
 document.getElementById('download-page-tab').addEventListener('click', () => showPage('downloads'));
 document.getElementById('request-page-tab').addEventListener('click', () => showPage('requests'));
 document.getElementById('catalog-page-tab').addEventListener('click', () => showPage('catalog'));
+document.getElementById('downloads-page-tab').addEventListener('click', () => showPage('download-history'));
 document.getElementById('logout-button').addEventListener('click', signOut);
 document.getElementById('request-search-form').addEventListener('submit', event => { event.preventDefault(); searchRequestTitles(); });
 document.getElementById('request-media-type').addEventListener('change', updateRequestFields);
 document.getElementById('refresh-requests').addEventListener('click', loadRequests);
 document.getElementById('refresh-catalog').addEventListener('click', loadCatalog);
+document.getElementById('refresh-downloads').addEventListener('click', loadDownloadHistory);
 
 function showPage(page) {
   const requests = page === 'requests';
   const catalog = page === 'catalog';
+  const downloadHistory = page === 'download-history';
   document.getElementById('request-page-tab').classList.toggle('active', requests);
   document.getElementById('catalog-page-tab').classList.toggle('active', catalog);
-  document.getElementById('download-page-tab').classList.toggle('active', !requests && !catalog);
-  document.getElementById('download-page-tab').setAttribute('aria-selected', String(!requests && !catalog));
+  document.getElementById('downloads-page-tab').classList.toggle('active', downloadHistory);
+  document.getElementById('download-page-tab').classList.toggle('active', !requests && !catalog && !downloadHistory);
+  document.getElementById('download-page-tab').setAttribute('aria-selected', String(!requests && !catalog && !downloadHistory));
   document.getElementById('request-page-tab').setAttribute('aria-selected', String(requests));
   document.getElementById('catalog-page-tab').setAttribute('aria-selected', String(catalog));
-  document.getElementById('media-tabs').hidden = requests || catalog;
+  document.getElementById('downloads-page-tab').setAttribute('aria-selected', String(downloadHistory));
+  document.getElementById('media-tabs').hidden = requests || catalog || downloadHistory;
   const showTv = document.getElementById('tv-tab').classList.contains('active');
-  document.getElementById('tv-panel').hidden = requests || catalog || !showTv;
-  document.getElementById('movie-panel').hidden = requests || catalog || showTv;
-  document.getElementById('results').hidden = requests || catalog || !episodeResults.length && !movieResults.length;
+  document.getElementById('tv-panel').hidden = requests || catalog || downloadHistory || !showTv;
+  document.getElementById('movie-panel').hidden = requests || catalog || downloadHistory || showTv;
+  document.getElementById('results').hidden = requests || catalog || downloadHistory || !episodeResults.length && !movieResults.length;
   document.getElementById('request-panel').hidden = !requests;
   document.getElementById('catalog-panel').hidden = !catalog;
-  document.getElementById('selection-bar').hidden = requests || catalog || selected.size === 0 && !currentJob;
+  document.getElementById('downloads-panel').hidden = !downloadHistory;
+  document.getElementById('selection-bar').hidden = requests || catalog || downloadHistory || selected.size === 0 && !currentJob;
   if (requests) loadRequests();
   if (catalog) loadCatalog();
+  if (downloadHistory) loadDownloadHistory();
   setStatus('');
 }
 
@@ -307,6 +323,48 @@ async function loadCatalog() {
     movieList.innerHTML = `<div class="empty"><strong>Could not load catalog</strong>${escapeHtml(error.message || '')}</div>`;
     showList.replaceChildren();
   }
+}
+
+async function loadDownloadHistory() {
+  if (downloadHistoryLoading) return;
+  downloadHistoryLoading = true;
+  try {
+    const response = await fetch('/api/download-batches');
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || 'Could not load download history.');
+    const jobs = data.jobs || [];
+    renderDownloadHistory(jobs);
+    if (jobs.some(job => job.status !== 'complete') && !downloadHistoryTimer) {
+      downloadHistoryTimer = setInterval(loadDownloadHistory, 2500);
+    } else if (!jobs.some(job => job.status !== 'complete') && downloadHistoryTimer) {
+      clearInterval(downloadHistoryTimer);
+      downloadHistoryTimer = null;
+    }
+  } catch (error) {
+    document.getElementById('download-job-list').innerHTML = `<div class="empty"><strong>Could not load downloads</strong>${escapeHtml(error.message || '')}</div>`;
+  } finally {
+    downloadHistoryLoading = false;
+  }
+}
+
+function renderDownloadHistory(jobs) {
+  const list = document.getElementById('download-job-list');
+  if (!jobs.length) {
+    list.innerHTML = '<div class="empty"><strong>No downloads yet</strong>Batches you send to Real-Debrid will appear here.</div>';
+    return;
+  }
+  list.innerHTML = jobs.map(job => {
+    const complete = job.completed || 0;
+    const failed = job.failed || 0;
+    const active = job.active || 0;
+    const created = job.created_at ? new Date(job.created_at).toLocaleString() : 'Time unavailable';
+    const items = (job.items || []).map(item => {
+      const detail = item.error || item.result?.destination || (item.status === 'queued' ? 'Waiting to start' : '');
+      return `<li class="download-job-item"><strong>${escapeHtml(item.title || `Selection ${item.index + 1}`)}</strong><span class="download-item-state ${escapeHtml(item.status)}">${escapeHtml(item.status)}</span>${detail ? `<span class="download-item-detail">${escapeHtml(detail)}</span>` : ''}</li>`;
+    }).join('');
+    const progress = `${complete} complete · ${active} active · ${failed} failed of ${job.total}`;
+    return `<article class="download-job-card"><div class="download-job-head"><div><strong>${escapeHtml(progress)}</strong><div class="download-job-time">Started ${escapeHtml(created)}</div></div><span class="download-job-state ${escapeHtml(job.status)}">${escapeHtml(job.status)}</span></div><ul class="download-job-items">${items}</ul></article>`;
+  }).join('');
 }
 
 function renderRequests(requests) {
@@ -503,6 +561,7 @@ async function sendSelected() {
     const response = await fetch('/api/download-batches', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({downloads:payload})});
     const started = await response.json();
     if (!response.ok) throw new Error(started.detail || 'Could not start batch.');
+    await loadDownloadHistory();
     await pollBatch(started.job_id);
   } catch (error) {
     currentJob = null;
@@ -553,6 +612,8 @@ fetch('/api/session').then(response => response.json()).then(session => {
   currentRole = session.role || 'admin';
   if (currentRole === 'requestor') {
     showPage('requests');
+  } else {
+    document.getElementById('downloads-page-tab').hidden = false;
   }
 }).catch(() => {});
 </script>
