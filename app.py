@@ -60,7 +60,7 @@ def password_hash(password: str, salt: bytes) -> bytes:
 def initialize_auth():
     if AUTH_USERS_FILE.exists():
         saved_users = json.loads(AUTH_USERS_FILE.read_text())
-        return {
+        users = {
             username: {
                 "salt": bytes.fromhex(value["salt"]),
                 "password_hash": bytes.fromhex(value["password_hash"]),
@@ -68,6 +68,19 @@ def initialize_auth():
             }
             for username, value in saved_users.items()
         }
+        requestor_password = os.environ.get("APP_REQUESTOR_PASSWORD")
+        if requestor_password:
+            salt = secrets.token_bytes(16)
+            users["requestor"] = {
+                "salt": salt,
+                "password_hash": password_hash(requestor_password, salt),
+                "role": "requestor",
+            }
+            AUTH_USERS_FILE.write_text(json.dumps({
+                username: {"salt": user["salt"].hex(), "password_hash": user["password_hash"].hex(), "role": user["role"]}
+                for username, user in users.items()
+            }))
+        return users
 
     configured_password = os.environ.get("APP_PASSWORD")
     configured_username = os.environ.get("APP_USERNAME")
