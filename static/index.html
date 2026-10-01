@@ -46,7 +46,7 @@
 
   <div class="status" id="status" role="status" aria-live="polite"></div>
   <section id="results" hidden>
-    <div class="section-head"><div><h2 id="result-heading">Results</h2><p id="result-subtitle"></p></div><div class="count" id="result-count"></div></div>
+    <div class="section-head"><div><h2 id="result-heading">Results</h2><p id="result-subtitle"></p></div><div style="display:flex;align-items:center;gap:12px"><button class="button secondary small" id="select-top-seeds" type="button" hidden>Select all top seeds</button><div class="count" id="result-count"></div></div></div>
     <div class="episodes" id="episodes"></div>
     <div class="movies" id="movies"></div>
   </section>
@@ -72,6 +72,7 @@ document.getElementById('tv-form').addEventListener('submit', event => { event.p
 document.getElementById('movie-form').addEventListener('submit', event => { event.preventDefault(); discoverMovie(); });
 document.getElementById('clear-selection').addEventListener('click', clearSelection);
 document.getElementById('send-selected').addEventListener('click', sendSelected);
+document.getElementById('select-top-seeds').addEventListener('click', selectTopSeeds);
 
 function selectPanel(media) {
   document.getElementById('tv-tab').classList.toggle('active', media === 'tv');
@@ -96,6 +97,7 @@ async function discoverSeason() {
     if (!response.ok) throw new Error(data.detail || 'Season search failed.');
     episodeResults = data.episodes;
     seriesTitle = data.series_title;
+    document.getElementById('select-top-seeds').hidden = !episodeResults.some(item => item.choices?.length);
     document.getElementById('result-heading').textContent = `${data.series_title} · Season ${season}`;
     document.getElementById('result-subtitle').textContent = 'Choose one of the two highest-seeder releases per episode';
     document.getElementById('result-count').textContent = `${episodeResults.length} episodes`;
@@ -120,6 +122,7 @@ async function discoverMovie() {
     if (!response.ok) throw new Error(data.detail || 'Movie search failed.');
     movieResults = data.streams;
     movieTitle = data.movie_title;
+    document.getElementById('select-top-seeds').hidden = true;
     document.getElementById('result-heading').textContent = data.movie_title;
     document.getElementById('result-subtitle').textContent = 'Releases ranked by reported seeders';
     document.getElementById('result-count').textContent = `${movieResults.length} releases`;
@@ -160,7 +163,7 @@ function renderEpisodes(season) {
     if (!item.choices?.length) {
       card.innerHTML = `<div class="episode-number">${escapeHtml(String(item.episode).padStart(2, '0'))}</div><div class="episode-main"><p class="episode-title">${escapeHtml(item.title)}</p><p class="release">${code}</p><div class="no-result">${escapeHtml(item.error || 'No Torrentio matches')}</div></div>`;
     } else {
-      const choices = item.choices.map((candidate, choiceIndex) => choiceMarkup(candidate, `tv:${item.episode}:${choiceIndex}`, choiceIndex ? 'Next best' : 'Top match', 'episode-meta')).join('');
+      const choices = item.choices.map((candidate, choiceIndex) => choiceMarkup(candidate, `tv:${item.episode}:${choiceIndex}`, choiceIndex ? 'Next best' : 'Top seed', 'episode-meta')).join('');
       card.innerHTML = `<div class="episode-number">${String(item.episode).padStart(2, '0')}</div><div class="episode-main"><p class="episode-title">${escapeHtml(item.title)}</p><p class="release">${code}</p><div class="choice-list">${choices}</div></div>`;
       card.querySelectorAll('input[type=checkbox]').forEach((checkbox, choiceIndex) => {
         checkbox.addEventListener('change', () => toggleSelection(checkbox, {
@@ -200,7 +203,22 @@ function renderMovies() {
 function choiceMarkup(item, key, label, metaClass) {
   const seedBadge = item.seeders < 0 ? '<span class="badge neutral">Seeds unavailable</span>' : `<span class="badge">${item.seeders.toLocaleString()} seeds</span>`;
   const resolution = item.resolution ? `<span class="badge neutral">${escapeHtml(item.resolution)}</span>` : '';
-  return `<label class="choice-row"><span class="choice-select"><input type="checkbox" data-key="${escapeHtml(key)}"><span>${escapeHtml(label)}</span></span><span class="choice-copy"><span class="release">${escapeHtml(item.name || item.title || 'Torrentio release')}</span><span class="${metaClass}">${seedBadge}${resolution}</span></span></label>`;
+  return `<label class="choice-row"><span class="choice-select"><input type="checkbox" data-key="${escapeHtml(key)}"><span>${escapeHtml(label)}</span></span><span class="choice-copy"><span class="release">${escapeHtml(item.title || item.name || 'Torrentio release')}</span><span class="${metaClass}">${seedBadge}${resolution}</span></span></label>`;
+}
+
+function selectTopSeeds() {
+  let skipped = 0;
+  episodeResults.forEach(item => {
+    if (!item.choices?.length) return;
+    const checkbox = document.querySelector(`input[data-key="tv:${item.episode}:0"]`);
+    if (!checkbox || checkbox.checked) return;
+    if (selected.size >= 30) { skipped++; return; }
+    checkbox.checked = true;
+    checkbox.dispatchEvent(new Event('change'));
+  });
+  setStatus(skipped
+    ? `Selected the top seed for available episodes; ${skipped} omitted because batches are limited to 30 releases.`
+    : 'Selected the top seed for each episode with a match.', 'success');
 }
 
 function toggleSelection(checkbox, item, exclusivePrefix = null) {
