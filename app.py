@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import binascii
 import logging
 import os
 import re
@@ -333,7 +335,7 @@ async def discover_movie(imdb_id: str = Query(..., pattern=r"^tt\d+$")):
 
 # ---- Existing user-selected RD download workflow ----
 
-async def rd_request(client, method, path, data=None):
+async def rd_request(client, method, path, data=None, params=None):
     for attempt in range(1, RD_REQUEST_ATTEMPTS + 1):
         try:
             if method == "POST":
@@ -341,7 +343,9 @@ async def rd_request(client, method, path, data=None):
                     RD_BASE + path, headers=rd_headers(), data=data
                 )
             else:
-                response = await client.get(RD_BASE + path, headers=rd_headers())
+                response = await client.get(
+                    RD_BASE + path, headers=rd_headers(), params=params
+                )
         except httpx.RequestError as exc:
             if attempt == RD_REQUEST_ATTEMPTS:
                 raise HTTPException(
@@ -368,8 +372,8 @@ async def rd_post(client, path, data=None):
     return await rd_request(client, "POST", path, data)
 
 
-async def rd_get(client, path):
-    return await rd_request(client, "GET", path)
+async def rd_get(client, path, params=None):
+    return await rd_request(client, "GET", path, params=params)
 
 
 async def download_direct_link(client, url, target):
@@ -399,8 +403,57 @@ async def download_direct_link(client, url, target):
             await asyncio.sleep(attempt)
 
 
+def magnet_info_hash(magnet: str) -> str | None:
+    match = re.search(r"(?:[?&])xt=urn:btih:([^&]+)", magnet, re.I)
+    if not match:
+        return None
+    value = match.group(1).strip().lower()
+    if re.fullmatch(r"[a-f0-9]{40}", value):
+        return value
+    if re.fullmatch(r"[a-z2-7]{32}", value, re.I):
+        try:
+            return base64.b32decode(value.upper()).hex()
+        except (binascii.Error, ValueError):
+            return None
+    return None
+
+
+async def find_existing_torrent(client, info_hash):
+    if not info_hash:
+        return None
+    torrents = (await rd_get(client, "/torrents", params={"limit": 5000})).json()
+    matches = [torrent for torrent in torrents
+               if str(torrent.get("hash", "")).lower() == info_hash]
+    if not matches:
+        return None
+    # Reuse a completed copy where possible; otherwise attach to the most
+    # progressed copy instead of adding the same magnet again.
+    matches.sort(
+        key=lambda torrent: (
+            torrent.get("status") == "downloaded",
+            float(torrent.get("progress") or 0),
+            str(torrent.get("added") or ""),
+        ),
+        reverse=True,
+    )
+    return matches[0]
+
+
+download_locks = {}
+
+
 @app.post("/api/download")
 async def download(req: DownloadRequest):
+    """Download a magnet, reusing an existing Real-Debrid torrent when possible."""
+    info_hash = magnet_info_hash(req.magnet)
+    if not info_hash:
+        return await download_locked(req, info_hash)
+    lock = download_locks.setdefault(info_hash, asyncio.Lock())
+    async with lock:
+        return await download_locked(req, info_hash)
+
+
+async def download_locked(req: DownloadRequest, info_hash: str | None):
     """Download a magnet explicitly supplied by the user."""
     if not TOKEN:
         raise HTTPException(503, "REAL_DEBRID_TOKEN is not configured")
@@ -408,9 +461,16 @@ async def download(req: DownloadRequest):
     logger.info("download started media_type=%s title=%r", req.media_type, req.title)
 
     async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
-        r = await rd_post(client, "/torrents/addMagnet", {"magnet": req.magnet})
-        torrent_id = r.json()["id"]
-        logger.info("Real-Debrid accepted torrent_id=%s", torrent_id)
+        existing = await find_existing_torrent(client, info_hash)
+        if existing:
+            torrent_id = existing["id"]
+            logger.info("reusing existing RD torrent torrent_id=%s hash=%s status=%s",
+                        torrent_id, info_hash, existing.get("status"))
+        else:
+            r = await rd_post(client, "/torrents/addMagnet", {"magnet": req.magnet})
+            torrent_id = r.json()["id"]
+            logger.info("Real-Debrid accepted new torrent_id=%s hash=%s",
+                        torrent_id, info_hash)
 
         info = None
         for _ in range(180):
@@ -447,8 +507,9 @@ async def download(req: DownloadRequest):
         file_ids = ",".join(str(f["id"]) for f in video_files)
         logger.info("selecting video files torrent_id=%s count=%s",
                     torrent_id, len(video_files))
-        await rd_post(client, f"/torrents/selectFiles/{torrent_id}",
-                      {"files": file_ids})
+        if not existing or info.get("status") != "downloaded":
+            await rd_post(client, f"/torrents/selectFiles/{torrent_id}",
+                          {"files": file_ids})
 
         last_status = None
         for _ in range(720):
