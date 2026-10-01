@@ -37,6 +37,7 @@ class DownloadRequest(BaseModel):
     title: str | None = None
     season: int | None = Field(default=None, ge=1)
     label: str | None = None
+    selection_key: str | None = None
 
 
 class DownloadBatchRequest(BaseModel):
@@ -520,7 +521,12 @@ async def create_download_batch(batch: DownloadBatchRequest):
         "completed": 0,
         "failed": 0,
         "items": [
-            {"index": i, "title": item.label or item.title or f"Selection {i + 1}", "status": "queued"}
+            {
+                "index": i,
+                "title": item.label or item.title or f"Selection {i + 1}",
+                "selection_key": item.selection_key,
+                "status": "queued",
+            }
             for i, item in enumerate(batch.downloads)
         ],
     }
