@@ -30,6 +30,9 @@
 @media(max-width:650px){.catalog-table{min-width:660px}}
 @media(max-width:650px){.account-create{grid-template-columns:1fr}.account-create .help{grid-column:auto}.account-item{grid-template-columns:1fr}.account-password-form{align-items:end}.account-password-form .button{white-space:nowrap}}
 </style>
+<style>
+.download-job-card.compact{padding:0;overflow:hidden}.download-job-summary{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 13px;cursor:pointer;list-style:none}.download-job-summary::-webkit-details-marker{display:none}.download-job-summary::before{content:'›';color:var(--muted);font-size:18px;line-height:1;transition:transform .15s}.download-job-card[open] .download-job-summary::before{transform:rotate(90deg)}.download-job-summary-main{display:flex;align-items:center;flex-wrap:wrap;gap:7px;flex:1;min-width:0}.download-job-summary-main strong{font-size:13px}.download-job-card.compact .download-job-items{margin:0;padding:0 13px 12px}
+</style>
 </head>
 <body>
 <main class="shell">
@@ -95,7 +98,7 @@
   </section>
 
   <section class="downloads-page" id="downloads-panel" hidden>
-    <div class="section-head"><div><h2>Downloads</h2><p>Batch status updates automatically and stays available after refresh.</p></div><button class="button secondary small" id="refresh-downloads" type="button">Refresh</button></div>
+    <div class="section-head"><div><h2>Downloads</h2><p>Recent activity from the last 6 hours. Active downloads update automatically.</p></div><button class="button secondary small" id="refresh-downloads" type="button">Refresh</button></div>
     <div class="download-job-list" id="download-job-list"></div>
   </section>
 
@@ -458,8 +461,13 @@ async function loadDownloadHistory() {
 
 function renderDownloadHistory(jobs) {
   const list = document.getElementById('download-job-list');
+  const cutoff = Date.now() - 6 * 60 * 60 * 1000;
+  jobs = jobs.filter(job => {
+    const created = Date.parse(job.created_at || '');
+    return Number.isFinite(created) && created >= cutoff;
+  });
   if (!jobs.length) {
-    list.innerHTML = '<div class="empty"><strong>No downloads yet</strong>Batches you send to Real-Debrid will appear here.</div>';
+    list.innerHTML = '<div class="empty"><strong>No recent downloads</strong>Downloads from the last 6 hours will appear here.</div>';
     return;
   }
   list.innerHTML = jobs.map(job => {
@@ -475,6 +483,9 @@ function renderDownloadHistory(jobs) {
       return `<li class="download-job-item"><strong>${escapeHtml(item.title || `Selection ${item.index + 1}`)}</strong><span class="download-item-state ${escapeHtml(item.status)}">${escapeHtml(item.status)}</span>${progress}${detail ? `<span class="download-item-detail">${escapeHtml(item.stage ? `${item.stage}: ` : '')}${escapeHtml(detail)}</span>` : ''}${warnings}</li>`;
     }).join('');
     const progress = `${complete} complete · ${active} active · ${failed} failed of ${job.total}`;
+    if (job.status === 'complete') {
+      return `<details class="download-job-card compact"><summary class="download-job-summary"><span class="download-job-summary-main"><strong>${escapeHtml(progress)}</strong><span class="download-job-time">${escapeHtml(created)}</span></span><span class="download-job-state complete">finished</span></summary><ul class="download-job-items">${items}</ul></details>`;
+    }
     return `<article class="download-job-card"><div class="download-job-head"><div><strong>${escapeHtml(progress)}</strong><div class="download-job-time">Started ${escapeHtml(created)}</div></div><span class="download-job-state ${escapeHtml(job.status)}">${escapeHtml(job.status)}</span></div><ul class="download-job-items">${items}</ul></article>`;
   }).join('');
 }
