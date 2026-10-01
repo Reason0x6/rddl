@@ -391,7 +391,7 @@ async def download(req: DownloadRequest):
         if not links:
             raise HTTPException(502, "Completed torrent returned no links")
 
-        destination_root = ROOT / req.media_type
+        destination_root = ROOT / ("TV" if req.media_type == "tv" else "movies")
         if req.media_type == "tv":
             if req.season is None:
                 raise HTTPException(422, "Season is required for TV downloads")

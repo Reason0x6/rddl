@@ -10,7 +10,7 @@ the Real-Debrid downloader processes your selection as an asynchronous batch.
 
 ## Layout
 
-- `/media/tv/<show>/S<season>`
+- `/media/TV/<show>/S<season>`
 - `/media/movies`
 
 ## Configure
