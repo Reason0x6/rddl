@@ -99,7 +99,13 @@ async def torrentio_streams(imdb_id: str, season: int, episode: int):
     url = f"{TORRENTIO_URL}/stream/series/{video_id}.json"
 
     async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-        r = await client.get(url)
+        r = await client.get(
+            url,
+            headers={
+                "User-Agent": "Stremio/4.4.168",
+                "Accept": "application/json",
+            },
+        )
         if r.status_code >= 400:
             raise HTTPException(r.status_code,
                                 f"Torrentio returned HTTP {r.status_code}")
