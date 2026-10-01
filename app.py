@@ -16,6 +16,8 @@ TOKEN = os.environ.get("REAL_DEBRID_TOKEN")
 ROOT = Path(os.environ.get("DOWNLOAD_ROOT", "/media"))
 POLL = int(os.environ.get("POLL_SECONDS", "10"))
 TORRENTIO_URL = os.environ.get("TORRENTIO_URL", "").rstrip("/")
+RD_REQUEST_ATTEMPTS = 3
+RETRYABLE_HTTP_STATUSES = {408, 425, 429}
 VIDEO_EXTENSIONS = {
     ".mkv", ".mp4", ".m4v", ".avi", ".mov", ".wmv", ".mpg", ".mpeg",
     ".m2ts", ".ts", ".webm", ".vob", ".ogv", ".3gp", ".flv", ".divx",
@@ -331,18 +333,70 @@ async def discover_movie(imdb_id: str = Query(..., pattern=r"^tt\d+$")):
 
 # ---- Existing user-selected RD download workflow ----
 
+async def rd_request(client, method, path, data=None):
+    for attempt in range(1, RD_REQUEST_ATTEMPTS + 1):
+        try:
+            if method == "POST":
+                response = await client.post(
+                    RD_BASE + path, headers=rd_headers(), data=data
+                )
+            else:
+                response = await client.get(RD_BASE + path, headers=rd_headers())
+        except httpx.RequestError as exc:
+            if attempt == RD_REQUEST_ATTEMPTS:
+                raise HTTPException(
+                    502, f"Real-Debrid request failed after {attempt} attempts"
+                ) from exc
+            logger.warning("RD request network error method=%s path=%s attempt=%s/%s",
+                           method, path, attempt, RD_REQUEST_ATTEMPTS)
+            await asyncio.sleep(attempt)
+            continue
+
+        status = response.status_code
+        retryable = status in RETRYABLE_HTTP_STATUSES or status >= 500
+        if status >= 400 and retryable and attempt < RD_REQUEST_ATTEMPTS:
+            logger.warning("RD request returned HTTP %s method=%s path=%s attempt=%s/%s",
+                           status, method, path, attempt, RD_REQUEST_ATTEMPTS)
+            await asyncio.sleep(attempt)
+            continue
+        if status >= 400:
+            raise HTTPException(status, f"Real-Debrid error: {response.text[:1000]}")
+        return response
+
+
 async def rd_post(client, path, data=None):
-    r = await client.post(RD_BASE + path, headers=rd_headers(), data=data)
-    if r.status_code >= 400:
-        raise HTTPException(r.status_code, f"Real-Debrid error: {r.text[:1000]}")
-    return r
+    return await rd_request(client, "POST", path, data)
 
 
 async def rd_get(client, path):
-    r = await client.get(RD_BASE + path, headers=rd_headers())
-    if r.status_code >= 400:
-        raise HTTPException(r.status_code, f"Real-Debrid error: {r.text[:1000]}")
-    return r
+    return await rd_request(client, "GET", path)
+
+
+async def download_direct_link(client, url, target):
+    for attempt in range(1, RD_REQUEST_ATTEMPTS + 1):
+        try:
+            async with client.stream("GET", url) as response:
+                status = response.status_code
+                retryable = status in RETRYABLE_HTTP_STATUSES or status >= 500
+                if status >= 400:
+                    if retryable and attempt < RD_REQUEST_ATTEMPTS:
+                        logger.warning("direct download returned HTTP %s attempt=%s/%s",
+                                       status, attempt, RD_REQUEST_ATTEMPTS)
+                        await asyncio.sleep(attempt)
+                        continue
+                    raise HTTPException(status, f"File download returned HTTP {status}")
+                with target.open("wb") as output:
+                    async for chunk in response.aiter_bytes(1024 * 1024):
+                        output.write(chunk)
+            return
+        except httpx.RequestError as exc:
+            if attempt == RD_REQUEST_ATTEMPTS:
+                raise HTTPException(
+                    502, f"File download failed after {attempt} attempts"
+                ) from exc
+            logger.warning("direct download network error attempt=%s/%s",
+                           attempt, RD_REQUEST_ATTEMPTS)
+            await asyncio.sleep(attempt)
 
 
 @app.post("/api/download")
@@ -449,11 +503,7 @@ async def download(req: DownloadRequest):
                 downloaded.append(str(target))
                 continue
 
-            async with client.stream("GET", direct) as dr:
-                dr.raise_for_status()
-                with target.open("wb") as out:
-                    async for chunk in dr.aiter_bytes(1024 * 1024):
-                        out.write(chunk)
+            await download_direct_link(client, direct, target)
 
             downloaded.append(str(target))
 
