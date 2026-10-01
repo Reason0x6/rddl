@@ -15,9 +15,6 @@ ROOT = Path(os.environ.get("DOWNLOAD_ROOT", "/media"))
 POLL = int(os.environ.get("POLL_SECONDS", "10"))
 TORRENTIO_URL = os.environ.get("TORRENTIO_URL", "").rstrip("/")
 
-if not TOKEN:
-    raise RuntimeError("REAL_DEBRID_TOKEN is not set")
-
 app = FastAPI(title="RD Media Downloader", version="2.0.0")
 
 
@@ -184,6 +181,9 @@ async def rd_get(client, path):
 @app.post("/api/download")
 async def download(req: DownloadRequest):
     """Download a magnet explicitly supplied by the user."""
+    if not TOKEN:
+        raise HTTPException(503, "REAL_DEBRID_TOKEN is not configured")
+
     async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
         r = await rd_post(client, "/torrents/addMagnet", {"magnet": req.magnet})
         torrent_id = r.json()["id"]
