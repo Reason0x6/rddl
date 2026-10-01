@@ -1,16 +1,23 @@
 import asyncio
 import base64
 import binascii
+import hashlib
+import hmac
+import json
 import logging
 import os
 import re
+import secrets
+import sqlite3
+import time
 import uuid
 from pathlib import Path
 from typing import Literal
+from urllib.parse import quote, urlsplit
 
 import httpx
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
 RD_BASE = "https://api.real-debrid.com/rest/1.0"
@@ -18,8 +25,16 @@ TOKEN = os.environ.get("REAL_DEBRID_TOKEN")
 ROOT = Path(os.environ.get("DOWNLOAD_ROOT", "/media"))
 POLL = int(os.environ.get("POLL_SECONDS", "10"))
 TORRENTIO_URL = os.environ.get("TORRENTIO_URL", "").rstrip("/")
+DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
+REQUEST_DB = DATA_DIR / "requests.sqlite3"
+AUTH_STATE_FILE = DATA_DIR / "auth.json"
+SESSION_KEY_FILE = DATA_DIR / "session.key"
 RD_REQUEST_ATTEMPTS = 3
 RETRYABLE_HTTP_STATUSES = {408, 425, 429}
+BLOCKED_RELEASE_PATTERNS = [
+    re.compile(r"web-dl|webrip|bdrip|hdrip|dvdrip", re.I),
+    re.compile(r"(?:bluray\.x264|hdtv\.x264|hdtv\.xvid|web\.x264|web\.h264)", re.I),
+]
 VIDEO_EXTENSIONS = {
     ".mkv", ".mp4", ".m4v", ".avi", ".mov", ".wmv", ".mpg", ".mpeg",
     ".m2ts", ".ts", ".webm", ".vob", ".ogv", ".3gp", ".flv", ".divx",
@@ -34,6 +49,119 @@ logger = logging.getLogger("rd_downloader")
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def password_hash(password: str, salt: bytes) -> bytes:
+    return hashlib.scrypt(password.encode(), salt=salt, n=2**14, r=8, p=1)
+
+
+def initialize_auth():
+    configured_password = os.environ.get("APP_PASSWORD")
+    configured_username = os.environ.get("APP_USERNAME")
+    if configured_password:
+        username = configured_username or "admin"
+        salt = secrets.token_bytes(16)
+        return username, salt, password_hash(configured_password, salt)
+
+    if AUTH_STATE_FILE.exists():
+        saved = json.loads(AUTH_STATE_FILE.read_text())
+        return saved["username"], bytes.fromhex(saved["salt"]), bytes.fromhex(saved["password_hash"])
+
+    username = configured_username or "admin"
+    initial_password = secrets.token_urlsafe(18)
+    salt = secrets.token_bytes(16)
+    verifier = password_hash(initial_password, salt)
+    AUTH_STATE_FILE.write_text(json.dumps({
+        "username": username,
+        "salt": salt.hex(),
+        "password_hash": verifier.hex(),
+    }))
+    logger.warning("Initial app login created username=%s password=%s; set APP_PASSWORD to replace it",
+                   username, initial_password)
+    return username, salt, verifier
+
+
+def load_session_key() -> bytes:
+    configured = os.environ.get("SESSION_SECRET")
+    if configured:
+        return configured.encode()
+    if SESSION_KEY_FILE.exists():
+        return SESSION_KEY_FILE.read_bytes()
+    key = secrets.token_bytes(32)
+    SESSION_KEY_FILE.write_bytes(key)
+    SESSION_KEY_FILE.chmod(0o600)
+    return key
+
+
+AUTH_USERNAME, AUTH_SALT, AUTH_PASSWORD_HASH = initialize_auth()
+SESSION_KEY = load_session_key()
+
+
+def init_request_db():
+    with sqlite3.connect(REQUEST_DB) as db:
+        db.execute("""CREATE TABLE IF NOT EXISTS requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            media_type TEXT NOT NULL CHECK(media_type IN ('movie', 'series')),
+            imdb_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            year TEXT,
+            season INTEGER,
+            requested_by TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'requested',
+            created_at TEXT NOT NULL
+        )""")
+        db.execute("CREATE INDEX IF NOT EXISTS request_status_idx ON requests(status, created_at)")
+
+
+init_request_db()
+
+SESSION_COOKIE = "rd_session"
+SESSION_TTL = 12 * 60 * 60
+AUTH_COOKIE_SECURE = os.environ.get("AUTH_COOKIE_SECURE", "0") == "1"
+LOGIN_FAILURES = {}
+
+
+def make_session(username: str) -> str:
+    payload = base64.urlsafe_b64encode(
+        f"{username}|{int(time.time()) + SESSION_TTL}".encode()
+    ).decode().rstrip("=")
+    signature = hmac.new(SESSION_KEY, payload.encode(), hashlib.sha256).hexdigest()
+    return f"{payload}.{signature}"
+
+
+def session_username(cookie: str | None) -> str | None:
+    if not cookie or "." not in cookie:
+        return None
+    payload, signature = cookie.rsplit(".", 1)
+    expected = hmac.new(SESSION_KEY, payload.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(signature, expected):
+        return None
+    try:
+        decoded = base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)).decode()
+        username, expires = decoded.rsplit("|", 1)
+        if int(expires) < int(time.time()) or username != AUTH_USERNAME:
+            return None
+        return username
+    except (ValueError, UnicodeDecodeError):
+        return None
+
+
+@app.middleware("http")
+async def require_login(request: Request, call_next):
+    username = session_username(request.cookies.get(SESSION_COOKIE))
+    request.state.username = username
+    if request.url.path.startswith("/api/") and request.url.path not in {
+        "/api/login", "/api/session",
+    } and not username:
+        return JSONResponse({"detail": "Login required"}, status_code=401)
+    if username and request.method not in {"GET", "HEAD", "OPTIONS"}:
+        origin = request.headers.get("origin")
+        host = request.headers.get("host")
+        if origin and host and urlsplit(origin).netloc != host:
+            return JSONResponse({"detail": "Cross-origin request rejected"}, status_code=403)
+    return await call_next(request)
+
 
 class DownloadRequest(BaseModel):
     magnet: str = Field(min_length=10)
@@ -42,10 +170,28 @@ class DownloadRequest(BaseModel):
     season: int | None = Field(default=None, ge=1)
     label: str | None = None
     selection_key: str | None = None
+    release_name: str = Field(min_length=1, max_length=500)
 
 
 class DownloadBatchRequest(BaseModel):
     downloads: list[DownloadRequest] = Field(min_length=1, max_length=30)
+
+
+class LoginRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=100)
+    password: str = Field(min_length=1, max_length=200)
+
+
+class MediaRequestInput(BaseModel):
+    media_type: Literal["movie", "series"]
+    imdb_id: str = Field(pattern=r"^tt\d+$", max_length=20)
+    title: str = Field(min_length=1, max_length=200)
+    year: str | None = Field(default=None, max_length=20)
+    season: int | None = Field(default=None, ge=1, le=100)
+
+
+class RequestStatusInput(BaseModel):
+    status: Literal["requested", "downloading", "completed", "declined"]
 
 
 def safe_name(value: str) -> str:
@@ -81,6 +227,11 @@ def parse_seeders(stream: dict) -> int:
             except ValueError:
                 pass
     return -1
+
+
+def release_is_allowed(*names: str | None) -> bool:
+    torrent_name = " ".join(name for name in names if name)
+    return not any(pattern.search(torrent_name) for pattern in BLOCKED_RELEASE_PATTERNS)
 
 
 def stream_to_magnet(stream: dict) -> str | None:
@@ -137,6 +288,8 @@ async def torrentio_streams(imdb_id: str, season: int, episode: int):
 
     results = []
     for stream in data.get("streams", []):
+        if not release_is_allowed(stream.get("name"), stream.get("title")):
+            continue
         magnet = stream_to_magnet(stream)
         item = {
             "name": stream.get("name"),
@@ -202,6 +355,8 @@ async def torrentio_movie_streams(imdb_id: str):
 
     results = []
     for stream in data.get("streams", []):
+        if not release_is_allowed(stream.get("name"), stream.get("title")):
+            continue
         magnet = stream_to_magnet(stream)
         if not magnet:
             continue
@@ -227,8 +382,150 @@ async def torrentio_movie_streams(imdb_id: str):
 
 
 @app.get("/")
-async def index():
-    return FileResponse("/app/static/index.html")
+async def index(request: Request):
+    if not request.state.username:
+        return FileResponse("/app/static/login.html", headers={"Cache-Control": "no-store"})
+    return FileResponse("/app/static/index.html", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/session")
+async def get_session(request: Request):
+    return {"authenticated": bool(request.state.username), "username": request.state.username}
+
+
+@app.post("/api/login")
+async def login(payload: LoginRequest, request: Request):
+    client_ip = request.client.host if request.client else "unknown"
+    failures, retry_after = LOGIN_FAILURES.get(client_ip, (0, 0))
+    if retry_after > time.time():
+        raise HTTPException(429, "Too many login attempts. Try again shortly.")
+    candidate_hash = password_hash(payload.password, AUTH_SALT)
+    valid_username = hmac.compare_digest(payload.username, AUTH_USERNAME)
+    valid_password = hmac.compare_digest(candidate_hash, AUTH_PASSWORD_HASH)
+    if not (valid_username and valid_password):
+        failures += 1
+        LOGIN_FAILURES[client_ip] = (0, time.time() + 60) if failures >= 5 else (failures, 0)
+        raise HTTPException(401, "Incorrect username or password")
+    LOGIN_FAILURES.pop(client_ip, None)
+    response = JSONResponse({"authenticated": True, "username": AUTH_USERNAME})
+    response.set_cookie(
+        SESSION_COOKIE,
+        make_session(AUTH_USERNAME),
+        max_age=SESSION_TTL,
+        httponly=True,
+        secure=AUTH_COOKIE_SECURE,
+        samesite="lax",
+        path="/",
+    )
+    return response
+
+
+@app.post("/api/logout")
+async def logout():
+    response = Response(status_code=204)
+    response.delete_cookie(SESSION_COOKIE, path="/")
+    return response
+
+
+@app.get("/api/title-search")
+async def search_titles(
+    media_type: Literal["movie", "series"] = Query(...),
+    query: str = Query(..., min_length=2, max_length=100),
+):
+    clean_query = query.strip()
+    if re.fullmatch(r"tt\d+", clean_query, re.I):
+        url = f"https://v3-cinemeta.strem.io/meta/{media_type}/{clean_query}.json"
+        result_key = "meta"
+    else:
+        url = (f"https://v3-cinemeta.strem.io/catalog/{media_type}/top/"
+               f"search={quote(clean_query, safe='')}.json")
+        result_key = "metas"
+    async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+        try:
+            response = await client.get(url)
+            response.raise_for_status()
+            payload = response.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            raise HTTPException(502, "IMDb title search is temporarily unavailable") from exc
+
+    raw_results = payload.get(result_key)
+    if isinstance(raw_results, dict):
+        raw_results = [raw_results]
+    if not isinstance(raw_results, list):
+        raw_results = []
+    results = []
+    for meta in raw_results:
+        if not isinstance(meta, dict):
+            continue
+        imdb_id = meta.get("imdb_id") or meta.get("id")
+        title = meta.get("name")
+        if not imdb_id or not title:
+            continue
+        results.append({
+            "imdb_id": imdb_id,
+            "title": title,
+            "year": str(meta.get("releaseInfo") or meta.get("year") or ""),
+            "poster": meta.get("poster"),
+            "media_type": media_type,
+        })
+    return {"results": results[:20]}
+
+
+def request_row(row):
+    return {
+        "id": row[0], "media_type": row[1], "imdb_id": row[2], "title": row[3],
+        "year": row[4], "season": row[5], "requested_by": row[6],
+        "status": row[7], "created_at": row[8],
+    }
+
+
+@app.get("/api/requests")
+async def list_requests():
+    with sqlite3.connect(REQUEST_DB) as db:
+        rows = db.execute(
+            "SELECT id, media_type, imdb_id, title, year, season, requested_by, status, created_at "
+            "FROM requests ORDER BY id DESC LIMIT 300"
+        ).fetchall()
+    return {"requests": [request_row(row) for row in rows]}
+
+
+@app.post("/api/requests", status_code=201)
+async def create_media_request(payload: MediaRequestInput, request: Request):
+    season = payload.season if payload.media_type == "series" else None
+    with sqlite3.connect(REQUEST_DB) as db:
+        existing = db.execute(
+            "SELECT id FROM requests WHERE imdb_id=? AND season IS ? "
+            "AND status IN ('requested', 'downloading') LIMIT 1",
+            (payload.imdb_id, season),
+        ).fetchone()
+        if existing:
+            raise HTTPException(409, "That title is already in the request queue")
+        cursor = db.execute(
+            "INSERT INTO requests (media_type, imdb_id, title, year, season, requested_by, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (payload.media_type, payload.imdb_id, payload.title, payload.year, season,
+             request.state.username, time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())),
+        )
+        request_id = cursor.lastrowid
+        row = db.execute(
+            "SELECT id, media_type, imdb_id, title, year, season, requested_by, status, created_at "
+            "FROM requests WHERE id=?", (request_id,),
+        ).fetchone()
+    return {"request": request_row(row)}
+
+
+@app.patch("/api/requests/{request_id}")
+async def update_media_request(request_id: int, payload: RequestStatusInput):
+    with sqlite3.connect(REQUEST_DB) as db:
+        cursor = db.execute("UPDATE requests SET status=? WHERE id=?",
+                            (payload.status, request_id))
+        if not cursor.rowcount:
+            raise HTTPException(404, "Request not found")
+        row = db.execute(
+            "SELECT id, media_type, imdb_id, title, year, season, requested_by, status, created_at "
+            "FROM requests WHERE id=?", (request_id,),
+        ).fetchone()
+    return {"request": request_row(row)}
 
 
 @app.get("/health")
@@ -445,6 +742,8 @@ download_locks = {}
 @app.post("/api/download")
 async def download(req: DownloadRequest):
     """Download a magnet, reusing an existing Real-Debrid torrent when possible."""
+    if not release_is_allowed(req.release_name):
+        raise HTTPException(422, "This release name is blocked by the configured source/codec rules")
     info_hash = magnet_info_hash(req.magnet)
     if not info_hash:
         return await download_locked(req, info_hash)

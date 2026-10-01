@@ -5,7 +5,12 @@ services:
     restart: unless-stopped
     environment:
       REAL_DEBRID_TOKEN: ${REAL_DEBRID_TOKEN:-}
+      APP_USERNAME: ${APP_USERNAME:-admin}
+      APP_PASSWORD: ${APP_PASSWORD:-}
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-0}
       DOWNLOAD_ROOT: /media
+      DATA_DIR: /data
       POLL_SECONDS: "10"
       PORT: "8080"
       # Set this to your configured Torrentio endpoint.
