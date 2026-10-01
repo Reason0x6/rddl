@@ -1,90 +1,223 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#f4f5f2">
 <title>RD Media Downloader</title>
 <style>
-body { font-family: system-ui, sans-serif; max-width: 1100px; margin: 40px auto; padding: 0 20px; }
-input, select, button { padding: 9px; margin: 4px; }
-table { width:100%; border-collapse:collapse; margin-top:20px; }
-th,td { padding:8px; border-bottom:1px solid #ddd; text-align:left; }
-button { cursor:pointer; }
-.muted { color:#666; }
+:root{color-scheme:light;--ink:#18221e;--muted:#69756f;--line:#e3e8e3;--paper:#fff;--canvas:#f4f5f2;--green:#177b56;--green-dark:#116344;--green-pale:#eaf5ee;--amber:#9c5c12;--amber-pale:#fff4df;--shadow:0 16px 40px #1c302512}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(ellipse at 78% -15%,#dceee2 0,transparent 38%),var(--canvas);color:var(--ink);font:15px/1.5 ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}button,input{font:inherit}button{cursor:pointer}.shell{width:min(900px,calc(100% - 36px));margin:0 auto;padding:38px 0 72px}.brand{display:flex;align-items:center;gap:11px;margin-bottom:48px;font-weight:700;letter-spacing:-.02em}.brand-mark{display:grid;place-items:center;width:37px;height:37px;border-radius:12px;color:white;background:var(--green);box-shadow:0 5px 14px #177b5633}.brand-mark svg{width:20px;height:20px}.eyebrow{color:var(--green);font-size:12px;font-weight:750;letter-spacing:.13em;text-transform:uppercase}h1{margin:9px 0 10px;font-size:clamp(32px,5vw,46px);line-height:1.08;letter-spacing:-.045em}.intro{max-width:620px;margin:0;color:var(--muted);font-size:16px}.tabs{display:flex;gap:6px;width:max-content;margin-top:30px;padding:5px;border:1px solid #e3e9e3;border-radius:13px;background:#e9ede9}.tab{min-width:124px;padding:9px 15px;border:0;border-radius:9px;color:#627068;background:transparent;font-weight:700}.tab.active{color:var(--green-dark);background:white;box-shadow:0 2px 7px #172a1d12}.search-card{margin-top:14px;padding:23px;border:1px solid #e7ebe6;border-radius:20px;background:#ffffffe0;box-shadow:var(--shadow)}.fields{display:grid;grid-template-columns:minmax(0,1fr) 150px auto;gap:14px;align-items:end}.fields.movie{grid-template-columns:minmax(0,1fr) auto}label{display:block;color:#48554e;font-size:13px;font-weight:650}input{display:block;width:100%;height:46px;margin-top:7px;padding:0 13px;border:1px solid #d8dfd9;border-radius:10px;outline:none;color:var(--ink);background:white}input:focus{border-color:#60a483;box-shadow:0 0 0 3px #177b561a}.help{margin:8px 0 0;color:#7d8982;font-size:12px}.button{display:inline-flex;justify-content:center;align-items:center;gap:8px;min-height:44px;padding:0 16px;border:0;border-radius:10px;color:white;background:var(--green);font-weight:700;transition:background .15s,transform .15s}.button:hover{background:var(--green-dark);transform:translateY(-1px)}.button:disabled{cursor:wait;opacity:.68;transform:none}.button.secondary{color:#405048;background:#eef2ee}.button.secondary:hover{background:#e4ebe5}.button.small{min-height:36px;padding:0 12px;font-size:13px}.status{min-height:25px;margin:16px 3px 0;color:var(--muted);font-size:14px}.status.error{color:#a3342b}.status.success{color:var(--green-dark)}.section-head{display:flex;justify-content:space-between;align-items:end;gap:16px;margin:37px 2px 15px}.section-head h2{margin:0;font-size:22px;letter-spacing:-.03em}.section-head p{margin:3px 0 0;color:var(--muted);font-size:13px}.count{color:var(--muted);font-size:13px;white-space:nowrap}.episodes,.movies{display:grid;gap:11px}.episode,.movie{display:grid;grid-template-columns:58px minmax(0,1fr) auto;align-items:center;gap:16px;padding:16px 18px;border:1px solid var(--line);border-radius:15px;background:var(--paper);box-shadow:0 4px 12px #172a1d08}.episode-number,.movie-number{display:grid;place-items:center;width:48px;height:48px;border-radius:13px;color:var(--green-dark);background:var(--green-pale);font-size:14px;font-weight:750}.episode-title,.movie-title{margin:0;overflow-wrap:anywhere;font-weight:700;letter-spacing:-.01em}.release{margin:4px 0 0;color:var(--muted);font-size:13px;overflow-wrap:anywhere}.episode-meta,.movie-meta{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:8px}.badge{display:inline-flex;align-items:center;min-height:24px;padding:2px 9px;border-radius:999px;color:#295440;background:var(--green-pale);font-size:12px;font-weight:700}.badge.neutral{color:#5d6962;background:#f0f2ef}.no-result{color:var(--muted);font-size:13px}.empty{padding:32px 18px;border:1px dashed #cfd8d0;border-radius:15px;color:var(--muted);background:#ffffff80;text-align:center}.empty strong{display:block;margin-bottom:4px;color:#35443b}dialog{width:min(440px,calc(100% - 28px));padding:0;border:0;border-radius:18px;box-shadow:0 24px 80px #0d1b1580}dialog::backdrop{background:#13251bb0;backdrop-filter:blur(3px)}.dialog-body{padding:23px}.dialog-body h2{margin:0;font-size:22px;letter-spacing:-.03em}.dialog-body>p{margin:7px 0 18px;color:var(--muted)}.path-preview{padding:12px;border-radius:10px;color:#345342;background:var(--green-pale);font-size:13px;overflow-wrap:anywhere}.dialog-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:22px}.spin{width:15px;height:15px;border:2px solid #ffffff70;border-top-color:white;border-radius:50%;animation:spin .7s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
+@media(max-width:650px){.shell{width:min(100% - 24px,540px);padding-top:23px}.brand{margin-bottom:35px}.tabs{width:100%}.tab{flex:1}.search-card{padding:17px}.fields{grid-template-columns:1fr 105px}.fields.movie{grid-template-columns:1fr}.fields .button{grid-column:1/-1;width:100%}.episode,.movie{grid-template-columns:48px minmax(0,1fr);gap:12px;padding:14px}.episode-number,.movie-number{width:42px;height:42px}.episode .button,.movie .button,.episode .no-result{grid-column:2;justify-self:start}.section-head{align-items:start;flex-direction:column;gap:4px}}
 </style>
 </head>
 <body>
-<h1>Real-Debrid Media Downloader</h1>
-<p class="muted">Torrentio discovery is ranking-only. Select a candidate, then explicitly submit its magnet to RD.</p>
+<main class="shell">
+  <div class="brand"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M7 4.8a1 1 0 0 1 1.52-.85l10.1 6.2a2.15 2.15 0 0 1 0 3.68l-10.1 6.2A1 1 0 0 1 7 19.18V4.8Z" fill="currentColor"/></svg></span><span>RD Media Downloader</span></div>
+  <header><div class="eyebrow">Your library, organized</div><h1>Pick a release.<br>We’ll handle the rest.</h1><p class="intro">Find the highest-seeder match for every episode in a season, or browse movie releases. Downloads stay under your control.</p></header>
 
-<div>
-  <input id="imdb" placeholder="IMDb ID e.g. tt0903747">
-  <input id="season" type="number" min="1" value="1" placeholder="Season">
-  <input id="episode" type="number" min="1" value="1" placeholder="Episode">
-  <button onclick="discover()">Discover</button>
-</div>
+  <nav class="tabs" aria-label="Media type">
+    <button class="tab active" id="tv-tab" type="button" aria-selected="true">TV shows</button>
+    <button class="tab" id="movie-tab" type="button" aria-selected="false">Movies</button>
+  </nav>
 
-<div id="status"></div>
-<table id="results" hidden>
-<thead><tr><th>Seeds</th><th>Resolution</th><th>Release</th><th>Action</th></tr></thead>
-<tbody></tbody>
-</table>
+  <section id="tv-panel">
+    <form class="search-card" id="tv-form">
+      <div class="fields">
+        <label>Series IMDb ID<input id="tv-imdb" placeholder="tt0185906" autocomplete="off" pattern="tt\d+" required></label>
+        <label>Season<input id="season" type="number" min="1" max="100" value="1" required></label>
+        <button class="button" id="tv-search" type="submit">Find episodes <span aria-hidden="true">→</span></button>
+      </div>
+      <p class="help">Shows one top-seeder candidate per episode. Downloads go to <code>TV / Show / S01</code>.</p>
+    </form>
+  </section>
+
+  <section id="movie-panel" hidden>
+    <form class="search-card" id="movie-form">
+      <div class="fields movie">
+        <label>Movie IMDb ID<input id="movie-imdb" placeholder="tt0111161" autocomplete="off" pattern="tt\d+" required></label>
+        <button class="button" id="movie-search" type="submit">Find releases <span aria-hidden="true">→</span></button>
+      </div>
+      <p class="help">Browse releases ranked by reported seeders. Movie files go directly into <code>Movies</code>.</p>
+    </form>
+  </section>
+
+  <div class="status" id="status" role="status" aria-live="polite"></div>
+  <section id="results" hidden>
+    <div class="section-head"><div><h2 id="result-heading">Results</h2><p id="result-subtitle"></p></div><div class="count" id="result-count"></div></div>
+    <div class="episodes" id="episodes"></div>
+    <div class="movies" id="movies"></div>
+  </section>
+</main>
+
+<dialog id="download-dialog">
+  <form class="dialog-body" id="download-form">
+    <h2>Send to Real-Debrid</h2><p id="download-description"></p>
+    <div class="path-preview" id="path-preview"></div>
+    <div class="dialog-actions"><button class="button secondary" id="cancel-download" type="button">Cancel</button><button class="button" id="confirm-download" type="submit">Download</button></div>
+  </form>
+</dialog>
 
 <script>
-let streams = [];
+let episodeResults = [];
+let movieResults = [];
+let selectedDownload = null;
+let activeMedia = 'tv';
+const statusEl = document.getElementById('status');
+const resultsSection = document.getElementById('results');
+const dialog = document.getElementById('download-dialog');
 
-async function discover() {
-  const imdb = document.getElementById('imdb').value.trim();
-  const s = document.getElementById('season').value;
-  const e = document.getElementById('episode').value;
-  document.getElementById('status').textContent = 'Querying Torrentio...';
+document.getElementById('tv-tab').addEventListener('click', () => selectPanel('tv'));
+document.getElementById('movie-tab').addEventListener('click', () => selectPanel('movie'));
+document.getElementById('tv-form').addEventListener('submit', event => { event.preventDefault(); discoverSeason(); });
+document.getElementById('movie-form').addEventListener('submit', event => { event.preventDefault(); discoverMovie(); });
 
-  const r = await fetch(`/api/discover?imdb_id=${encodeURIComponent(imdb)}&season=${s}&episode=${e}`);
-  const data = await r.json();
-  if (!r.ok) {
-    document.getElementById('status').textContent = data.detail || 'Discovery failed';
+function selectPanel(media) {
+  activeMedia = media;
+  document.getElementById('tv-tab').classList.toggle('active', media === 'tv');
+  document.getElementById('movie-tab').classList.toggle('active', media === 'movie');
+  document.getElementById('tv-tab').setAttribute('aria-selected', String(media === 'tv'));
+  document.getElementById('movie-tab').setAttribute('aria-selected', String(media === 'movie'));
+  document.getElementById('tv-panel').hidden = media !== 'tv';
+  document.getElementById('movie-panel').hidden = media !== 'movie';
+  resultsSection.hidden = true;
+  setStatus('');
+}
+
+async function discoverSeason() {
+  const imdb = document.getElementById('tv-imdb').value.trim();
+  const season = Number(document.getElementById('season').value);
+  const button = document.getElementById('tv-search');
+  beginSearch(button, 'Loading season episodes…', 'Searching…');
+  try {
+    const response = await fetch(`/api/discover-season?imdb_id=${encodeURIComponent(imdb)}&season=${season}`);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || 'Season search failed.');
+    episodeResults = data.episodes;
+    document.getElementById('result-heading').textContent = `${data.series_title} · Season ${season}`;
+    document.getElementById('result-subtitle').textContent = 'One top-seeder candidate per episode';
+    document.getElementById('result-count').textContent = `${episodeResults.length} episodes`;
+    renderEpisodes(season);
+    document.getElementById('movies').replaceChildren();
+    document.getElementById('episodes').hidden = false;
+    document.getElementById('movies').hidden = true;
+    resultsSection.hidden = false;
+    const found = episodeResults.filter(item => item.best).length;
+    setStatus(`Found a candidate for ${found} of ${episodeResults.length} episodes.`, found ? 'success' : '');
+  } catch (error) { setStatus(error.message || 'Season search failed.', 'error'); }
+  finally { endSearch(button, 'Find episodes'); }
+}
+
+async function discoverMovie() {
+  const imdb = document.getElementById('movie-imdb').value.trim();
+  const button = document.getElementById('movie-search');
+  beginSearch(button, 'Searching Torrentio…', 'Searching…');
+  try {
+    const response = await fetch(`/api/discover-movie?imdb_id=${encodeURIComponent(imdb)}`);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || 'Movie search failed.');
+    movieResults = data.streams;
+    document.getElementById('result-heading').textContent = data.movie_title;
+    document.getElementById('result-subtitle').textContent = 'Releases ranked by reported seeders';
+    document.getElementById('result-count').textContent = `${movieResults.length} releases`;
+    renderMovies();
+    document.getElementById('episodes').replaceChildren();
+    document.getElementById('episodes').hidden = true;
+    document.getElementById('movies').hidden = false;
+    resultsSection.hidden = false;
+    setStatus(movieResults.length ? `Found ${movieResults.length} releases.` : 'No movie releases found.', movieResults.length ? 'success' : '');
+  } catch (error) { setStatus(error.message || 'Movie search failed.', 'error'); }
+  finally { endSearch(button, 'Find releases'); }
+}
+
+function beginSearch(button, message, label) {
+  resultsSection.hidden = true;
+  setStatus(message);
+  button.disabled = true;
+  button.dataset.label = label;
+  button.innerHTML = `<span class="spin" aria-hidden="true"></span>${escapeHtml(label)}`;
+}
+function endSearch(button, label) {
+  button.disabled = false;
+  button.innerHTML = `${escapeHtml(label)} <span aria-hidden="true">→</span>`;
+}
+
+function renderEpisodes(season) {
+  const list = document.getElementById('episodes');
+  list.replaceChildren();
+  if (!episodeResults.length) {
+    list.innerHTML = '<div class="empty"><strong>No episodes found</strong>Check the IMDb ID and season number.</div>';
     return;
   }
-
-  streams = data.streams;
-  const body = document.querySelector('#results tbody');
-  body.innerHTML = '';
-
-  streams.forEach((x, i) => {
-    const tr = document.createElement('tr');
-    const release = x.name || x.title || x.description || 'Unnamed';
-    tr.innerHTML = `<td>${x.seeders < 0 ? '?' : x.seeders.toLocaleString()}</td>
-      <td>${x.resolution || '?'}</td>
-      <td>${escapeHtml(release)}</td>
-      <td><button onclick="download(${i})">Send selected magnet to RD</button></td>`;
-    body.appendChild(tr);
+  episodeResults.forEach((item, index) => {
+    const card = document.createElement('article');
+    card.className = 'episode';
+    const code = `S${String(season).padStart(2, '0')}E${String(item.episode).padStart(2, '0')}`;
+    if (!item.best) {
+      card.innerHTML = `<div class="episode-number">${escapeHtml(String(item.episode).padStart(2, '0'))}</div><div><p class="episode-title">${escapeHtml(item.title)}</p><p class="release">${code}</p></div><span class="no-result">${escapeHtml(item.error || 'No Torrentio matches')}</span>`;
+    } else {
+      const best = item.best;
+      const seedBadge = best.seeders < 0 ? '<span class="badge neutral">Seed count unavailable</span>' : `<span class="badge">${best.seeders.toLocaleString()} seeds</span>`;
+      const resolution = best.resolution ? `<span class="badge neutral">${escapeHtml(best.resolution)}</span>` : '';
+      card.innerHTML = `<div class="episode-number">${String(item.episode).padStart(2, '0')}</div><div><p class="episode-title">${escapeHtml(item.title)}</p><p class="release">${escapeHtml(best.name || best.title || 'Torrentio release')}</p><div class="episode-meta">${seedBadge}${resolution}</div></div><button class="button small" type="button">Choose release</button>`;
+      card.querySelector('button').addEventListener('click', () => openDownload('tv', index, code));
+    }
+    list.append(card);
   });
-
-  document.getElementById('results').hidden = false;
-  document.getElementById('status').textContent =
-    `${streams.length} candidate(s), sorted by reported seeders.`;
 }
 
-async function download(i) {
-  const x = streams[i];
-  const type = prompt('Type: tv or movies', 'tv');
-  if (type !== 'tv' && type !== 'movies') return;
-  const title = prompt('Library folder/title', '') || undefined;
-
-  const r = await fetch('/api/download', {
-    method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({magnet:x.magnet, media_type:type, title})
+function renderMovies() {
+  const list = document.getElementById('movies');
+  list.replaceChildren();
+  if (!movieResults.length) {
+    list.innerHTML = '<div class="empty"><strong>No releases found</strong>Try again later or check the IMDb ID.</div>';
+    return;
+  }
+  movieResults.forEach((item, index) => {
+    const card = document.createElement('article');
+    card.className = 'movie';
+    const seedBadge = item.seeders < 0 ? '<span class="badge neutral">Seed count unavailable</span>' : `<span class="badge">${item.seeders.toLocaleString()} seeds</span>`;
+    const resolution = item.resolution ? `<span class="badge neutral">${escapeHtml(item.resolution)}</span>` : '';
+    card.innerHTML = `<div class="movie-number">${String(index + 1).padStart(2, '0')}</div><div><p class="movie-title">${escapeHtml(item.name || item.title || `Release ${index + 1}`)}</p><div class="movie-meta">${seedBadge}${resolution}</div></div><button class="button small" type="button">Choose release</button>`;
+    card.querySelector('button').addEventListener('click', () => openDownload('movies', index));
+    list.append(card);
   });
-  const data = await r.json();
-  document.getElementById('status').textContent =
-    r.ok ? `Downloaded: ${JSON.stringify(data.files)}` : (data.detail || 'Download failed');
 }
 
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, c => ({
-    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'
-  }[c]));
+function openDownload(media, index, episodeCode = '') {
+  activeMedia = media;
+  selectedDownload = media === 'tv' ? episodeResults[index] : movieResults[index];
+  const title = media === 'tv' ? document.getElementById('result-heading').textContent.split(' · ')[0] : document.getElementById('result-heading').textContent;
+  document.getElementById('download-description').textContent = media === 'tv' ? `${episodeCode} · ${selectedDownload.title}` : title;
+  document.getElementById('path-preview').textContent = media === 'tv'
+    ? `/media/tv/${title}/S${String(document.getElementById('season').value).padStart(2, '0')}`
+    : '/media/movies';
+  document.getElementById('confirm-download').textContent = media === 'tv' ? 'Download episode' : 'Download movie';
+  document.getElementById('confirm-download').disabled = false;
+  dialog.showModal();
 }
+
+document.getElementById('cancel-download').addEventListener('click', () => dialog.close());
+document.getElementById('download-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const confirm = document.getElementById('confirm-download');
+  confirm.disabled = true;
+  confirm.innerHTML = `<span class="spin" aria-hidden="true"></span>Sending…`;
+  setStatus(`Sending ${activeMedia === 'tv' ? selectedDownload.title : 'movie'} to Real-Debrid…`);
+  const title = activeMedia === 'tv' ? document.getElementById('result-heading').textContent.split(' · ')[0] : document.getElementById('result-heading').textContent;
+  const season = activeMedia === 'tv' ? Number(document.getElementById('season').value) : undefined;
+  try {
+    const response = await fetch('/api/download', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({magnet:selectedDownload.best ? selectedDownload.best.magnet : selectedDownload.magnet,media_type:activeMedia,title,season})});
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || 'Download failed.');
+    dialog.close();
+    setStatus(`Saved to ${data.destination}.`, 'success');
+  } catch (error) { setStatus(error.message || 'Download failed.', 'error'); }
+  finally { confirm.disabled = false; confirm.textContent = activeMedia === 'tv' ? 'Download episode' : 'Download movie'; }
+});
+
+function setStatus(message, kind = '') { statusEl.textContent = message; statusEl.className = `status ${kind}`; }
+function escapeHtml(value) { return String(value).replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[char])); }
 </script>
 </body>
 </html>

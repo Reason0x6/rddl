@@ -1,8 +1,8 @@
 # RD Media Downloader v2
 
-Uses the Stremio addon protocol to query a configured Torrentio endpoint for
-individual episode streams. Candidates are ranked by the seeder count parsed
-from the returned stream metadata.
+Uses the Stremio addon protocol to query a configured Torrentio endpoint. TV
+searches look up a season's episode list and show the top reported-seeder
+candidate for each episode. Movie searches show ranked candidates.
 
 The UI does **not** automatically submit the highest-ranked Torrentio result.
 You select a candidate, then the existing Real-Debrid downloader handles the
@@ -10,7 +10,7 @@ magnet.
 
 ## Layout
 
-- `/media/tv`
+- `/media/tv/<show>/S<season>`
 - `/media/movies`
 
 ## Configure
@@ -42,6 +42,8 @@ Open:
 http://SERVER-IP:8080
 ```
 
-The `/api/discover` endpoint returns ranked candidates for one episode.
+The `/api/discover-season` endpoint returns one top candidate per episode.
+The `/api/discover-movie` endpoint returns ranked movie candidates.
 The `/api/download` endpoint accepts a magnet explicitly selected by the user
-and sends it through Real-Debrid.
+and sends it through Real-Debrid. TV files are stored in a show folder and an
+`S01`-style season folder. Movie files are stored directly in `/media/movies`.

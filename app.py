@@ -22,6 +22,7 @@ class DownloadRequest(BaseModel):
     magnet: str = Field(min_length=10)
     media_type: Literal["tv", "movies"]
     title: str | None = None
+    season: int | None = Field(default=None, ge=1)
 
 
 def safe_name(value: str) -> str:
@@ -131,7 +132,74 @@ async def torrentio_streams(imdb_id: str, season: int, episode: int):
         if magnet:
             results.append(item)
 
-    results.sort(key=lambda x: (x["seeders"], x["resolution"] or ""), reverse=True)
+    resolution_order = {"2160p": 2160, "1080p": 1080, "720p": 720, "480p": 480}
+    results.sort(
+        key=lambda x: (x["seeders"], resolution_order.get(x["resolution"], 0)),
+        reverse=True,
+    )
+    return results
+
+
+async def season_metadata(imdb_id: str):
+    url = f"https://v3-cinemeta.strem.io/meta/series/{imdb_id}.json"
+    async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+        try:
+            response = await client.get(url)
+            response.raise_for_status()
+            payload = response.json()
+        except httpx.HTTPStatusError as exc:
+            raise HTTPException(502, "Stremio metadata service returned an error") from exc
+        except (httpx.RequestError, ValueError) as exc:
+            raise HTTPException(502, "Could not read series metadata from Stremio") from exc
+
+    meta = payload.get("meta") or {}
+    videos = meta.get("videos")
+    if not isinstance(videos, list):
+        raise HTTPException(404, "No episode list found for this IMDb ID")
+    return meta
+
+
+async def torrentio_movie_streams(imdb_id: str):
+    if not TORRENTIO_URL:
+        raise HTTPException(500, "TORRENTIO_URL is not configured")
+
+    url = f"{TORRENTIO_URL}/stream/movie/{imdb_id}.json"
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+        response = await client.get(
+            url,
+            headers={
+                "User-Agent": "Stremio/4.4.168",
+                "Accept": "application/json",
+            },
+        )
+        if response.status_code >= 400:
+            raise HTTPException(response.status_code,
+                                f"Torrentio returned HTTP {response.status_code}")
+        data = response.json()
+
+    results = []
+    for stream in data.get("streams", []):
+        magnet = stream_to_magnet(stream)
+        if not magnet:
+            continue
+        text = " ".join(str(stream.get(key, "")) for key in ("name", "title", "description")).lower()
+        resolution = next((value for value in ("2160p", "1080p", "720p", "480p")
+                           if value in text), None)
+        results.append({
+            "name": stream.get("name"),
+            "title": stream.get("title"),
+            "description": stream.get("description"),
+            "infoHash": stream.get("infoHash"),
+            "seeders": parse_seeders(stream),
+            "resolution": resolution,
+            "magnet": magnet,
+        })
+
+    resolution_order = {"2160p": 2160, "1080p": 1080, "720p": 720, "480p": 480}
+    results.sort(
+        key=lambda item: (item["seeders"], resolution_order.get(item["resolution"], 0)),
+        reverse=True,
+    )
     return results
 
 
@@ -165,6 +233,80 @@ async def discover(
         "season": season,
         "episode": episode,
         "streams": await torrentio_streams(imdb_id, season, episode),
+    }
+
+
+@app.get("/api/discover-season")
+async def discover_season(
+    imdb_id: str = Query(..., pattern=r"^tt\d+$"),
+    season: int = Query(..., ge=1),
+):
+    """Return the highest-seeder Torrentio candidate for each episode."""
+    meta = await season_metadata(imdb_id)
+    videos = []
+    for video in meta.get("videos", []):
+        video_season = video.get("season")
+        episode = video.get("episode", video.get("number"))
+        if video_season == season and isinstance(episode, int) and episode > 0:
+            videos.append((episode, video))
+
+    videos.sort(key=lambda item: item[0])
+    if not videos:
+        raise HTTPException(404, f"No episodes found for season {season}")
+
+    semaphore = asyncio.Semaphore(5)
+
+    async def episode_result(episode, video):
+        async with semaphore:
+            try:
+                candidates = await torrentio_streams(imdb_id, season, episode)
+                return {
+                    "episode": episode,
+                    "title": video.get("name") or f"Episode {episode}",
+                    "best": candidates[0] if candidates else None,
+                    "candidate_count": len(candidates),
+                }
+            except HTTPException as exc:
+                return {
+                    "episode": episode,
+                    "title": video.get("name") or f"Episode {episode}",
+                    "best": None,
+                    "candidate_count": 0,
+                    "error": exc.detail,
+                }
+
+    episodes = await asyncio.gather(
+        *(episode_result(episode, video) for episode, video in videos)
+    )
+    return {
+        "imdb_id": imdb_id,
+        "series_title": meta.get("name") or imdb_id,
+        "season": season,
+        "episodes": episodes,
+    }
+
+
+@app.get("/api/discover-movie")
+async def discover_movie(imdb_id: str = Query(..., pattern=r"^tt\d+$")):
+    """Return movie candidates ranked by reported seeders."""
+    meta_url = f"https://v3-cinemeta.strem.io/meta/movie/{imdb_id}.json"
+    async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+        try:
+            response = await client.get(meta_url)
+            response.raise_for_status()
+            payload = response.json()
+        except httpx.HTTPStatusError as exc:
+            raise HTTPException(502, "Stremio metadata service returned an error") from exc
+        except (httpx.RequestError, ValueError) as exc:
+            raise HTTPException(502, "Could not read movie metadata from Stremio") from exc
+
+    meta = payload.get("meta") or {}
+    if not meta:
+        raise HTTPException(404, "Movie not found for this IMDb ID")
+    return {
+        "imdb_id": imdb_id,
+        "movie_title": meta.get("name") or imdb_id,
+        "streams": await torrentio_movie_streams(imdb_id),
     }
 
 
@@ -225,12 +367,16 @@ async def download(req: DownloadRequest):
         if not links:
             raise HTTPException(502, "Completed torrent returned no links")
 
-        destination_root = ROOT / ("tv" if req.media_type == "tv" else "movies")
-        destination_root.mkdir(parents=True, exist_ok=True)
+        destination_root = ROOT / req.media_type
+        if req.media_type == "tv":
+            if req.season is None:
+                raise HTTPException(422, "Season is required for TV downloads")
+            show_dir = destination_root / safe_name(req.title or "Unknown show")
+            target_dir = show_dir / f"S{req.season:02d}"
+        else:
+            target_dir = destination_root
 
-        target_dir = destination_root / safe_name(
-            req.title or info.get("filename", "download")
-        )
+        destination_root.mkdir(parents=True, exist_ok=True)
         target_dir.mkdir(parents=True, exist_ok=True)
 
         downloaded = []
