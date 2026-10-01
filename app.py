@@ -44,8 +44,8 @@ class DownloadBatchRequest(BaseModel):
 
 
 def safe_name(value: str) -> str:
-    value = re.sub(r'[<>:"/\\\\|?*\\x00-\\x1f]', "_", value)
-    value = re.sub(r"\\s+", " ", value).strip().rstrip(".")
+    value = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", value)
+    value = re.sub(r"\s+", " ", value).strip().rstrip(".")
     return value[:180] or "Unknown"
 
 
