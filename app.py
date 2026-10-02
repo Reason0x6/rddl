@@ -670,7 +670,21 @@ async def list_requests():
             "SELECT id, media_type, imdb_id, title, year, season, requested_by, status, created_at "
             "FROM requests ORDER BY id DESC LIMIT 300"
         ).fetchall()
-    return {"requests": [request_row(row) for row in rows]}
+    requests = []
+    for row in rows:
+        item = request_row(row)
+        if item["media_type"] == "movie":
+            item["downloaded"] = catalog_movie_match(item["title"])
+            item["downloaded_seasons"] = []
+        else:
+            catalog_state = catalog_series_match(item["title"], item["season"] or 0)
+            item["downloaded_seasons"] = catalog_state["downloaded_seasons"]
+            item["downloaded"] = (
+                f"S{item['season']:02d}" in item["downloaded_seasons"]
+                if item["season"] else bool(item["downloaded_seasons"])
+            )
+        requests.append(item)
+    return {"requests": requests}
 
 
 @app.post("/api/requests", status_code=201)
