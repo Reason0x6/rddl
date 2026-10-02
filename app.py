@@ -246,9 +246,13 @@ class DownloadRequest(BaseModel):
     media_type: Literal["tv", "movies"]
     title: str | None = None
     season: int | None = Field(default=None, ge=1)
+    episode: int | None = Field(default=None, ge=1, le=999)
     label: str | None = None
     selection_key: str | None = None
     release_name: str = Field(min_length=1, max_length=500)
+    rd_torrent_id: str | None = Field(default=None, max_length=100)
+    file_ids: list[int] | None = Field(default=None, max_length=200)
+    destination_override: str | None = Field(default=None, max_length=500)
 
 
 class DownloadBatchRequest(BaseModel):
@@ -288,12 +292,33 @@ def safe_name(value: str) -> str:
 
 
 def download_target_dir(req: DownloadRequest) -> Path:
+    if req.destination_override:
+        root = ROOT.resolve()
+        candidate = Path(req.destination_override).expanduser()
+        if not candidate.is_absolute():
+            candidate = root / candidate
+        try:
+            candidate = candidate.resolve()
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise HTTPException(422, "Invalid custom save location") from exc
+        if candidate != root and root not in candidate.parents:
+            raise HTTPException(422, "Custom save location must be inside the media folder")
+        return candidate
     destination_root = ROOT / ("TV" if req.media_type == "tv" else "Movies")
     if req.media_type == "tv":
         if req.season is None:
             raise HTTPException(422, "Season is required for TV downloads")
         return destination_root / safe_name(req.title or "Unknown show") / f"S{req.season:02d}"
     return destination_root
+
+
+def episode_coordinates(filename: str) -> tuple[int, int] | None:
+    match = re.search(r"(?<![a-z0-9])s(\d{1,2})[ ._-]*e(\d{1,3})(?!\d)", filename, re.I)
+    if not match:
+        match = re.search(r"season[ ._-]*(\d{1,2}).{0,12}?(?:episode|ep)[ ._-]*(\d{1,3})", filename, re.I)
+    if not match:
+        match = re.search(r"(?<!\d)(\d{1,2})x(\d{1,3})(?!\d)", filename, re.I)
+    return (int(match.group(1)), int(match.group(2))) if match else None
 
 
 def rd_headers():
@@ -1024,6 +1049,98 @@ async def find_existing_torrent(client, info_hash):
 download_locks = {}
 
 
+async def torrent_details(client, req: DownloadRequest, info_hash: str | None,
+                          progress_callback=None):
+    if req.rd_torrent_id:
+        torrent_id = req.rd_torrent_id
+        info = (await rd_get(client, f"/torrents/info/{torrent_id}")).json()
+        remote_hash = str(info.get("hash") or "").lower()
+        if info_hash and remote_hash and remote_hash != info_hash:
+            raise HTTPException(422, "Prepared Real-Debrid torrent does not match this release")
+        existing = {"id": torrent_id, "status": info.get("status")}
+    else:
+        existing = await find_existing_torrent(client, info_hash)
+        if existing:
+            torrent_id = existing["id"]
+        else:
+            if progress_callback:
+                progress_callback("Adding magnet to Real-Debrid", 0, "Waiting for torrent details")
+            response = await rd_post(client, "/torrents/addMagnet", {"magnet": req.magnet})
+            torrent_id = response.json()["id"]
+            existing = None
+            logger.info("Real-Debrid accepted new torrent_id=%s hash=%s", torrent_id, info_hash)
+        info = None
+
+    for _ in range(180):
+        if info is None:
+            info = (await rd_get(client, f"/torrents/info/{torrent_id}")).json()
+        if info.get("files"):
+            if progress_callback:
+                progress_callback("Torrent details ready", info.get("progress"),
+                                  f"{len(info['files'])} files found")
+            logger.info("torrent files ready torrent_id=%s count=%s",
+                        torrent_id, len(info["files"]))
+            return existing, torrent_id, info
+        if info.get("status") in ("error", "dead", "virus", "magnet_error"):
+            raise HTTPException(502, f"Real-Debrid failed: {info.get('status')}")
+        if progress_callback:
+            progress_callback("Waiting for torrent details", info.get("progress"),
+                              f"Real-Debrid status: {info.get('status', 'unknown')}")
+        await asyncio.sleep(POLL)
+        info = None
+    raise HTTPException(504, "Real-Debrid did not expose torrent files")
+
+
+@app.post("/api/inspect-downloads")
+async def inspect_downloads(batch: DownloadBatchRequest):
+    if not TOKEN:
+        raise HTTPException(503, "REAL_DEBRID_TOKEN is not configured")
+    semaphore = asyncio.Semaphore(3)
+
+    async def inspect_one(req: DownloadRequest):
+        if not release_is_allowed(req.release_name):
+            raise HTTPException(422, "This release name is blocked by the configured source/codec rules")
+        info_hash = magnet_info_hash(req.magnet)
+        lock = download_locks.setdefault(info_hash, asyncio.Lock()) if info_hash else asyncio.Lock()
+        async with semaphore, lock:
+            async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
+                _, torrent_id, info = await torrent_details(client, req, info_hash)
+        videos = []
+        for file in info.get("files", []):
+            path = str(file.get("path") or "")
+            if Path(path).suffix.lower() not in VIDEO_EXTENSIONS:
+                continue
+            coordinates = episode_coordinates(Path(path).name)
+            season, episode = coordinates if coordinates else (None, None)
+            mismatch = (
+                req.media_type == "tv" and req.season is not None and req.episode is not None
+                and coordinates is not None
+                and (season != req.season or episode != req.episode)
+            )
+            videos.append({
+                "id": int(file["id"]),
+                "path": path,
+                "size": file.get("bytes"),
+                "season": season,
+                "episode": episode,
+                "mismatch": mismatch,
+            })
+        if not videos:
+            raise HTTPException(422, "This release has no standalone video files")
+        return {
+            "selection_key": req.selection_key,
+            "title": req.label or req.title or "Selected release",
+            "media_type": req.media_type,
+            "season": req.season,
+            "episode": req.episode,
+            "torrent_id": torrent_id,
+            "default_destination": str(download_target_dir(req)),
+            "files": videos,
+        }
+
+    return {"downloads": await asyncio.gather(*(inspect_one(req) for req in batch.downloads))}
+
+
 @app.post("/api/download")
 async def download(req: DownloadRequest, progress_callback=None):
     """Download a magnet, reusing an existing Real-Debrid torrent when possible."""
@@ -1047,41 +1164,13 @@ async def download_locked(req: DownloadRequest, info_hash: str | None, progress_
         progress_callback("Checking Real-Debrid", None, "Looking for an existing torrent")
 
     async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
-        existing = await find_existing_torrent(client, info_hash)
+        existing, torrent_id, info = await torrent_details(client, req, info_hash, progress_callback)
         if existing:
-            torrent_id = existing["id"]
             logger.info("reusing existing RD torrent torrent_id=%s hash=%s status=%s",
                         torrent_id, info_hash, existing.get("status"))
             if progress_callback:
                 progress_callback("Reusing existing torrent", existing.get("progress"),
                                   f"Real-Debrid status: {existing.get('status', 'unknown')}")
-        else:
-            if progress_callback:
-                progress_callback("Adding magnet to Real-Debrid", 0, "Waiting for torrent details")
-            r = await rd_post(client, "/torrents/addMagnet", {"magnet": req.magnet})
-            torrent_id = r.json()["id"]
-            logger.info("Real-Debrid accepted new torrent_id=%s hash=%s",
-                        torrent_id, info_hash)
-
-        info = None
-        for _ in range(180):
-            info = (await rd_get(client, f"/torrents/info/{torrent_id}")).json()
-            if info.get("files"):
-                if progress_callback:
-                    progress_callback("Torrent details ready", info.get("progress"),
-                                      f"{len(info['files'])} files found")
-                logger.info("torrent files ready torrent_id=%s count=%s",
-                            torrent_id, len(info["files"]))
-                break
-            if info.get("status") in ("error", "dead", "virus", "magnet_error"):
-                raise HTTPException(502, f"Real-Debrid failed: {info.get('status')}")
-            if progress_callback:
-                progress_callback("Waiting for torrent details", info.get("progress"),
-                                  f"Real-Debrid status: {info.get('status', 'unknown')}")
-            await asyncio.sleep(POLL)
-
-        if not info or not info.get("files"):
-            raise HTTPException(504, "Real-Debrid did not expose torrent files")
 
         # Real-Debrid exposes torrent contents as individual files. Select only
         # playable video files so archives, samples, subtitles, and metadata
@@ -1101,15 +1190,34 @@ async def download_locked(req: DownloadRequest, info_hash: str | None, progress_
                 "This release has no standalone video files (it may contain only a RAR/ZIP archive). Choose another release.",
             )
 
+        if req.file_ids:
+            wanted_file_ids = list(dict.fromkeys(req.file_ids))
+            wanted_file_id_set = set(wanted_file_ids)
+            available_file_ids = {int(file["id"]) for file in video_files}
+            if not wanted_file_id_set.issubset(available_file_ids):
+                raise HTTPException(422, "One of the selected video files is no longer available")
+            video_files = [file for file in video_files if int(file["id"]) in wanted_file_id_set]
+        elif len(video_files) > 1:
+            raise HTTPException(409, "This torrent has multiple video files; inspect it and choose one first")
+        else:
+            wanted_file_ids = [int(file["id"]) for file in video_files]
+
         file_ids = ",".join(str(f["id"]) for f in video_files)
         if progress_callback:
             progress_callback("Selecting video files", info.get("progress"),
                               f"{len(video_files)} video file(s) selected")
         logger.info("selecting video files torrent_id=%s count=%s",
                     torrent_id, len(video_files))
-        if not existing or info.get("status") != "downloaded":
-            await rd_post(client, f"/torrents/selectFiles/{torrent_id}",
-                          {"files": file_ids})
+        should_select = not existing or info.get("status") != "downloaded" or req.file_ids is not None
+        if should_select:
+            try:
+                await rd_post(client, f"/torrents/selectFiles/{torrent_id}",
+                              {"files": file_ids})
+            except HTTPException:
+                if info.get("status") != "downloaded":
+                    raise
+                logger.warning("Real-Debrid would not change files on completed torrent_id=%s; checking available links",
+                               torrent_id)
 
         last_status = None
         for _ in range(720):
@@ -1135,6 +1243,28 @@ async def download_locked(req: DownloadRequest, info_hash: str | None, progress_
         links = info.get("links", [])
         if not links:
             raise HTTPException(502, "Completed torrent returned no links")
+
+        if wanted_file_ids:
+            selected_in_rd = [file for file in info.get("files", []) if int(file.get("selected") or 0) == 1]
+            link_by_file_id = {
+                int(file["id"]): link for file, link in zip(selected_in_rd, links)
+            }
+            chosen_links = [link_by_file_id[file_id] for file_id in wanted_file_ids
+                            if file_id in link_by_file_id]
+            # Older/completed torrents may omit selection flags. If RD returns
+            # one link per video file, the file list order still identifies it.
+            if not link_by_file_id and len(links) == len(video_files):
+                link_by_file_id = {
+                    int(file["id"]): link for file, link in zip(video_files, links)
+                }
+                chosen_links = [link_by_file_id[file_id] for file_id in wanted_file_ids
+                                if file_id in link_by_file_id]
+            if chosen_links:
+                links = chosen_links
+            elif len(wanted_file_ids) == 1 and len(links) == 1:
+                links = links[:1]
+            else:
+                raise HTTPException(409, "Real-Debrid did not return the selected video file")
 
         target_dir = download_target_dir(req)
         destination_root = ROOT / ("TV" if req.media_type == "tv" else "Movies")
@@ -1306,6 +1436,8 @@ async def run_download_job(job_id: str, requests: list[DownloadRequest]):
 async def create_download_batch(batch: DownloadBatchRequest):
     if not TOKEN:
         raise HTTPException(503, "REAL_DEBRID_TOKEN is not configured")
+    for request in batch.downloads:
+        download_target_dir(request)
 
     job_id = uuid.uuid4().hex
     download_requests[job_id] = batch.downloads

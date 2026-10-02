@@ -44,6 +44,8 @@ html{scroll-behavior:smooth}body{position:relative;overflow-x:hidden;background:
 @media(max-width:600px){.shell{width:calc(100% - 28px);padding-top:14px}.topbar{gap:9px}.brand{font-size:12px}.brand-mark{width:31px;height:31px}.page-tabs{justify-content:flex-start;width:100%;scrollbar-width:none}.page-tabs::-webkit-scrollbar{display:none}.page-tabs .tab{flex:0 0 auto;font-size:11px}.hero{grid-template-columns:1fr;min-height:0;padding:55px 0 28px}.hero-copy{padding:0}.hero h1{margin:18px 0 14px;font-size:clamp(48px,14vw,72px)}.hero .intro{font-size:14px}.hero-footnote{margin-top:25px}.hero-art{min-height:300px;margin-top:5px}.art-caption{right:3%;bottom:0}.hero-object{width:min(100%,410px)}.section-head{flex-direction:row;align-items:center}.section-head h2{font-size:19px}.section-head p{max-width:240px}.search-card{padding:15px}.fields,.fields.movie{grid-template-columns:1fr}.fields .button{grid-column:auto}.request-fields{grid-template-columns:1fr 1fr}.live-download-layout{grid-template-columns:1fr}.live-download-panel{padding:14px}.site-footer{align-items:flex-start;flex-wrap:wrap;margin-top:45px}.site-footer nav{order:3;width:100%;justify-content:flex-start}.footer-status{margin-left:auto}.selection-bar{width:calc(100% - 18px)}}
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
 body{isolation:isolate}.float-spark{animation:spark-glow 3.4s ease-in-out infinite alternate}.spark-b{animation-delay:.8s}.spark-c{animation-delay:1.6s}@keyframes spark-glow{from{opacity:.42;transform:translateY(2px) scale(.8)}to{opacity:1;transform:translateY(-4px) scale(1.2)}}.download-page-actions{display:flex;align-items:center;gap:8px}.download-page-actions .button.danger{border-color:#bd6248;color:#ffb09b;background:#20110e}.download-page-actions .button.danger:hover{border-color:#ff9c7e;color:#ffd0c3;background:#35150f}.downloads-page>.section-head{flex-wrap:wrap}.download-page-actions{margin-left:auto}@media(max-width:600px){.download-page-actions{width:100%;margin-left:0;flex-wrap:wrap}.download-page-actions .button{flex:1}}
+.download-review-dialog{width:min(700px,calc(100% - 24px));max-height:90vh;overflow:auto}.download-review-dialog .dialog-body{max-height:90vh;overflow:auto}.download-review-dialog .dialog-body h2{margin-top:6px}.review-download-list{display:grid;gap:11px;max-height:56vh;overflow:auto}.review-release{padding:13px;border:1px solid #ffffff18;border-radius:12px;background:#0a0b0d}.review-release-head{display:flex;justify-content:space-between;gap:10px;margin-bottom:8px}.review-release-head strong{color:#f0eeeb;font-size:12px}.review-release-head span{color:#929294;font-size:10px}.review-file-choices{display:grid;gap:6px}.review-file-choice{display:grid;grid-template-columns:17px minmax(0,1fr) auto;align-items:center;gap:8px;padding:8px;border:1px solid #ffffff12;border-radius:9px;background:#101113;cursor:pointer}.review-file-choice:has(input:checked){border-color:#ff8b4d77;background:#1c120d}.review-file-choice input{width:15px;height:15px;margin:0;accent-color:#ff792f}.review-file-choice strong{overflow-wrap:anywhere;color:#d8d6d2;font-size:11px;font-weight:500}.review-file-choice>span:last-child{color:#858587;font-size:10px;white-space:nowrap}.review-mismatch{margin-top:9px;padding:9px 10px;border:1px solid #bd74434d;border-radius:9px;color:#ffc08f;background:#24170f;font-size:11px}.review-mismatch p{margin:0;color:inherit}.review-destination{display:block;margin-top:9px}.review-destination input{height:38px}.review-destination .help{margin-top:4px}.review-default-destination{margin-top:7px;color:#858587;font-size:10px;overflow-wrap:anywhere}.download-review-dialog .dialog-actions{position:sticky;bottom:-23px;padding:12px 0 0;background:#121315;z-index:1}
+.review-error{margin:0 0 10px;padding:9px 11px;border:1px solid #b54a36;border-radius:9px;color:#ffab95;background:#29120e;font-size:12px}
 </style>
 </head>
 <body>
@@ -158,6 +160,14 @@ body{isolation:isolate}.float-spark{animation:spark-glow 3.4s ease-in-out infini
   <div class="selection-info"><div class="selection-title" id="selection-count">0 selected</div><div class="selection-detail" id="selection-detail">Choose releases to send to Real-Debrid</div></div>
   <div class="selection-actions"><button class="button secondary small" id="clear-selection" type="button">Clear</button><button class="button small" id="send-selected" type="button">Send selected to RD</button></div>
 </aside>
+<dialog id="download-review-dialog" class="download-review-dialog">
+  <div class="dialog-body">
+    <div class="eyebrow">FINAL CHECK</div><h2>Choose video files</h2><p>Review the video files Real-Debrid found for your selections.</p>
+    <div class="review-error" id="review-error" hidden></div>
+    <div class="review-download-list" id="review-download-list"></div>
+    <div class="dialog-actions"><button class="button secondary small" id="review-cancel" type="button">Cancel</button><button class="button small" id="review-confirm" type="button">Download selected files</button></div>
+  </div>
+</dialog>
 
 <script>
 let episodeResults = [];
@@ -170,6 +180,9 @@ let selected = new Map();
 let currentJob = null;
 let downloadHistoryTimer = null;
 let downloadHistoryLoading = false;
+let pendingReviewResolver = null;
+let pendingReviewRequests = null;
+let pendingReviewData = null;
 const statusEl = document.getElementById('status');
 const resultsSection = document.getElementById('results');
 let currentRole = 'admin';
@@ -180,6 +193,15 @@ document.getElementById('tv-form').addEventListener('submit', event => { event.p
 document.getElementById('movie-form').addEventListener('submit', event => { event.preventDefault(); discoverMovie(); });
 document.getElementById('clear-selection').addEventListener('click', clearSelection);
 document.getElementById('send-selected').addEventListener('click', sendSelected);
+document.getElementById('review-cancel').addEventListener('click', () => finishDownloadReview(null));
+document.getElementById('review-confirm').addEventListener('click', confirmDownloadReview);
+document.getElementById('download-review-dialog').addEventListener('cancel', event => {
+  event.preventDefault();
+  finishDownloadReview(null);
+});
+document.getElementById('review-download-list').addEventListener('change', event => {
+  if (event.target.matches('input[type=radio][data-file-review]')) updateReviewMismatch(event.target);
+});
 document.getElementById('select-top-seeds').addEventListener('click', selectTopSeeds);
 document.getElementById('download-page-tab').addEventListener('click', () => showPage('downloads'));
 document.getElementById('request-page-tab').addEventListener('click', () => showPage('requests'));
@@ -682,6 +704,7 @@ function renderEpisodes(season) {
           title: seriesTitle,
           release_name: item.choices[choiceIndex].title || item.choices[choiceIndex].name || `Torrentio episode ${code}`,
           season,
+          episode: item.episode,
           display: `${code} · ${item.title}`,
         }, `tv:${item.episode}:`));
       });
@@ -781,10 +804,33 @@ async function sendSelected() {
     return;
   }
   currentJob = true;
-  updateSelectionBar(`Starting ${payload.length} downloads…`);
-  setStatus(`Sending ${payload.length} selected release${payload.length === 1 ? '' : 's'} to Real-Debrid…`);
+  updateSelectionBar(`Checking files for ${payload.length} release${payload.length === 1 ? '' : 's'}…`);
+  setStatus('Checking video files in the selected Real-Debrid torrents…');
   try {
-    const response = await fetch('/api/download-batches', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({downloads:payload})});
+    const inspectResponse = await fetch('/api/inspect-downloads', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({downloads:payload})});
+    const inspected = await inspectResponse.json();
+    if (!inspectResponse.ok) throw new Error(inspected.detail || 'Could not inspect selected torrents.');
+    const reviews = inspected.downloads || [];
+    const needsReview = reviews.some(review => review.files.length > 1 || review.files.some(file => file.mismatch));
+    let readyPayload;
+    if (needsReview) {
+      readyPayload = await reviewDownloadFiles(payload, reviews);
+      if (!readyPayload) {
+        currentJob = null;
+        updateSelectionBar();
+        setStatus('Review cancelled. No files were downloaded; checked torrents may remain in Real-Debrid.', '');
+        return;
+      }
+    } else {
+      readyPayload = payload.map((item, index) => ({
+        ...item,
+        rd_torrent_id: reviews[index].torrent_id,
+        file_ids: [reviews[index].files[0].id],
+      }));
+    }
+    updateSelectionBar(`Starting ${readyPayload.length} downloads…`);
+    setStatus(`Sending ${readyPayload.length} selected file${readyPayload.length === 1 ? '' : 's'} to Real-Debrid…`);
+    const response = await fetch('/api/download-batches', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({downloads:readyPayload})});
     const started = await response.json();
     if (!response.ok) throw new Error(started.detail || 'Could not start batch.');
     await loadDownloadHistory();
@@ -794,6 +840,90 @@ async function sendSelected() {
     updateSelectionBar();
     setStatus(error.message || 'Batch download failed.', 'error');
   }
+}
+
+function reviewDownloadFiles(requests, reviews) {
+  const list = document.getElementById('review-download-list');
+  document.getElementById('review-error').hidden = true;
+  list.innerHTML = reviews.map((review, index) => {
+    const multi = review.files.length > 1;
+    const choices = review.files.map(file => {
+      const seasonEpisode = file.season && file.episode
+        ? `S${String(file.season).padStart(2, '0')}E${String(file.episode).padStart(2, '0')}` : '';
+      return `<label class="review-file-choice"><input type="radio" name="file-choice-${index}" data-file-review="${index}" value="${file.id}" data-mismatch="${file.mismatch}" data-season="${file.season || ''}" data-episode="${file.episode || ''}" ${!multi ? 'checked disabled' : ''} ${multi ? 'required' : ''}><strong>${escapeHtml(file.path)}</strong><span>${seasonEpisode ? `${seasonEpisode} · ` : ''}${formatFileSize(file.size)}</span></label>`;
+    }).join('');
+    const mismatchBlock = requests[index].media_type === 'tv' && requests[index].episode
+      ? `<div class="review-mismatch" data-review-mismatch="${index}" hidden><p></p><label class="review-destination">Save to a different folder (optional)<input type="text" data-destination-override="${index}" autocomplete="off" placeholder="For example: TV/Show/S01/Other folder"><span class="help">Enter a path under /media, or leave blank for the requested season folder.</span></label></div>`
+      : '';
+    return `<article class="review-release" data-review-release="${index}" data-expected-season="${requests[index].season || ''}" data-expected-episode="${requests[index].episode || ''}"><div class="review-release-head"><strong>${escapeHtml(review.title)}</strong><span>${multi ? `${review.files.length} video files · choose one` : 'One video file found'}</span></div><div class="review-file-choices">${choices}</div>${mismatchBlock}<div class="review-default-destination">Default save folder: ${escapeHtml(review.default_destination)}</div></article>`;
+  }).join('');
+  reviews.forEach((review, index) => {
+    if (review.files.length === 1) {
+      const radio = list.querySelector(`input[data-file-review="${index}"]`);
+      updateReviewMismatch(radio);
+    }
+  });
+  return new Promise(resolve => {
+    pendingReviewResolver = resolve;
+    pendingReviewRequests = requests;
+    pendingReviewData = reviews;
+    setStatus('Choose a video file for multi-file torrents. Check any episode mismatch before continuing.', '');
+    document.getElementById('download-review-dialog').showModal();
+  });
+}
+
+function updateReviewMismatch(radio) {
+  const index = Number(radio.dataset.fileReview);
+  const block = document.querySelector(`[data-review-mismatch="${index}"]`);
+  if (!block) return;
+  block.hidden = radio.dataset.mismatch !== 'true';
+  if (radio.dataset.mismatch === 'true') {
+    const actual = `S${String(radio.dataset.season).padStart(2, '0')}E${String(radio.dataset.episode).padStart(2, '0')}`;
+    const release = radio.closest('[data-review-release]');
+    const expected = `S${String(release.dataset.expectedSeason).padStart(2, '0')}E${String(release.dataset.expectedEpisode).padStart(2, '0')}`;
+    block.querySelector('p').textContent = `This file is labeled ${actual}, but you selected ${expected}. Choose a different save folder if you prefer; otherwise it will use the requested season folder.`;
+  }
+}
+
+function confirmDownloadReview() {
+  const list = document.getElementById('review-download-list');
+  const error = document.getElementById('review-error');
+  const payload = [...list.querySelectorAll('[data-review-release]')].map(release => {
+    const selectedFile = release.querySelector('input[data-file-review]:checked');
+    if (!selectedFile) return null;
+    const index = Number(release.dataset.reviewRelease);
+    const destination = release.querySelector(`[data-destination-override="${index}"]`)?.value.trim();
+    return {index, file_id: Number(selectedFile.value), destination_override: destination || null};
+  });
+  if (payload.some(item => !item)) {
+    error.textContent = 'Choose one video file for every multi-file torrent.';
+    error.hidden = false;
+    return;
+  }
+  finishDownloadReview(payload);
+}
+
+function finishDownloadReview(choices) {
+  const dialog = document.getElementById('download-review-dialog');
+  if (dialog.open) dialog.close();
+  const resolve = pendingReviewResolver;
+  pendingReviewResolver = null;
+  if (!resolve) return;
+  if (!choices) {
+    pendingReviewRequests = null;
+    pendingReviewData = null;
+    resolve(null);
+    return;
+  }
+  const ready = choices.map(choice => ({
+    ...pendingReviewRequests[choice.index],
+    file_ids: [choice.file_id],
+    rd_torrent_id: pendingReviewData[choice.index].torrent_id,
+    destination_override: choice.destination_override,
+  }));
+  pendingReviewRequests = null;
+  pendingReviewData = null;
+  resolve(ready);
 }
 
 async function pollBatch(jobId) {
