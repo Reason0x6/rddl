@@ -200,7 +200,7 @@ document.getElementById('download-review-dialog').addEventListener('cancel', eve
   finishDownloadReview(null);
 });
 document.getElementById('review-download-list').addEventListener('change', event => {
-  if (event.target.matches('input[type=radio][data-file-review]')) updateReviewMismatch(event.target);
+  if (event.target.matches('input[type=checkbox][data-file-review]')) updateReviewMismatch(event.target);
 });
 document.getElementById('select-top-seeds').addEventListener('click', selectTopSeeds);
 document.getElementById('download-page-tab').addEventListener('click', () => showPage('downloads'));
@@ -850,38 +850,39 @@ function reviewDownloadFiles(requests, reviews) {
     const choices = review.files.map(file => {
       const seasonEpisode = file.season && file.episode
         ? `S${String(file.season).padStart(2, '0')}E${String(file.episode).padStart(2, '0')}` : '';
-      return `<label class="review-file-choice"><input type="radio" name="file-choice-${index}" data-file-review="${index}" value="${file.id}" data-mismatch="${file.mismatch}" data-season="${file.season || ''}" data-episode="${file.episode || ''}" ${!multi ? 'checked disabled' : ''} ${multi ? 'required' : ''}><strong>${escapeHtml(file.path)}</strong><span>${seasonEpisode ? `${seasonEpisode} · ` : ''}${formatFileSize(file.size)}</span></label>`;
+      return `<label class="review-file-choice"><input type="checkbox" data-file-review="${index}" value="${file.id}" data-path="${escapeHtml(file.path)}" data-mismatch="${file.mismatch}" data-season="${file.season || ''}" data-episode="${file.episode || ''}" ${!multi ? 'checked disabled' : ''}><strong>${escapeHtml(file.path)}</strong><span>${seasonEpisode ? `${seasonEpisode} · ` : ''}${formatFileSize(file.size)}</span></label>`;
     }).join('');
     const mismatchBlock = requests[index].media_type === 'tv' && requests[index].episode
       ? `<div class="review-mismatch" data-review-mismatch="${index}" hidden><p></p><label class="review-destination">Save to a different folder (optional)<input type="text" data-destination-override="${index}" autocomplete="off" placeholder="For example: TV/Show/S01/Other folder"><span class="help">Enter a path under /media, or leave blank for the requested season folder.</span></label></div>`
       : '';
-    return `<article class="review-release" data-review-release="${index}" data-expected-season="${requests[index].season || ''}" data-expected-episode="${requests[index].episode || ''}"><div class="review-release-head"><strong>${escapeHtml(review.title)}</strong><span>${multi ? `${review.files.length} video files · choose one` : 'One video file found'}</span></div><div class="review-file-choices">${choices}</div>${mismatchBlock}<div class="review-default-destination">Default save folder: ${escapeHtml(review.default_destination)}</div></article>`;
+    return `<article class="review-release" data-review-release="${index}" data-expected-season="${requests[index].season || ''}" data-expected-episode="${requests[index].episode || ''}"><div class="review-release-head"><strong>${escapeHtml(review.title)}</strong><span>${multi ? `${review.files.length} video files · select one or more` : 'One video file found'}</span></div><div class="review-file-choices">${choices}</div>${mismatchBlock}<div class="review-default-destination">Default save folder: ${escapeHtml(review.default_destination)}</div></article>`;
   }).join('');
   reviews.forEach((review, index) => {
     if (review.files.length === 1) {
-      const radio = list.querySelector(`input[data-file-review="${index}"]`);
-      updateReviewMismatch(radio);
+      const checkbox = list.querySelector(`input[data-file-review="${index}"]`);
+      updateReviewMismatch(checkbox);
     }
   });
   return new Promise(resolve => {
     pendingReviewResolver = resolve;
     pendingReviewRequests = requests;
     pendingReviewData = reviews;
-    setStatus('Choose a video file for multi-file torrents. Check any episode mismatch before continuing.', '');
+    setStatus('Choose one or more video files for each torrent. Check any episode mismatch before continuing.', '');
     document.getElementById('download-review-dialog').showModal();
   });
 }
 
-function updateReviewMismatch(radio) {
-  const index = Number(radio.dataset.fileReview);
+function updateReviewMismatch(checkbox) {
+  const index = Number(checkbox.dataset.fileReview);
   const block = document.querySelector(`[data-review-mismatch="${index}"]`);
   if (!block) return;
-  block.hidden = radio.dataset.mismatch !== 'true';
-  if (radio.dataset.mismatch === 'true') {
-    const actual = `S${String(radio.dataset.season).padStart(2, '0')}E${String(radio.dataset.episode).padStart(2, '0')}`;
-    const release = radio.closest('[data-review-release]');
+  const release = checkbox.closest('[data-review-release]');
+  const mismatches = [...release.querySelectorAll('input[data-file-review]:checked[data-mismatch="true"]')];
+  block.hidden = mismatches.length === 0;
+  if (mismatches.length) {
     const expected = `S${String(release.dataset.expectedSeason).padStart(2, '0')}E${String(release.dataset.expectedEpisode).padStart(2, '0')}`;
-    block.querySelector('p').textContent = `This file is labeled ${actual}, but you selected ${expected}. Choose a different save folder if you prefer; otherwise it will use the requested season folder.`;
+    const actual = mismatches.map(file => `${file.dataset.path} (S${String(file.dataset.season).padStart(2, '0')}E${String(file.dataset.episode).padStart(2, '0')})`).join(', ');
+    block.querySelector('p').textContent = `These selected files do not match the requested ${expected}: ${actual}. Choose a different save folder if you prefer; otherwise they will use the requested season folder.`;
   }
 }
 
@@ -889,14 +890,14 @@ function confirmDownloadReview() {
   const list = document.getElementById('review-download-list');
   const error = document.getElementById('review-error');
   const payload = [...list.querySelectorAll('[data-review-release]')].map(release => {
-    const selectedFile = release.querySelector('input[data-file-review]:checked');
-    if (!selectedFile) return null;
+    const selectedFiles = [...release.querySelectorAll('input[data-file-review]:checked')];
+    if (!selectedFiles.length) return null;
     const index = Number(release.dataset.reviewRelease);
     const destination = release.querySelector(`[data-destination-override="${index}"]`)?.value.trim();
-    return {index, file_id: Number(selectedFile.value), destination_override: destination || null};
+    return {index, file_ids: selectedFiles.map(file => Number(file.value)), destination_override: destination || null};
   });
   if (payload.some(item => !item)) {
-    error.textContent = 'Choose one video file for every multi-file torrent.';
+    error.textContent = 'Choose at least one video file for every torrent.';
     error.hidden = false;
     return;
   }
@@ -917,7 +918,7 @@ function finishDownloadReview(choices) {
   }
   const ready = choices.map(choice => ({
     ...pendingReviewRequests[choice.index],
-    file_ids: [choice.file_id],
+    file_ids: choice.file_ids,
     rd_torrent_id: pendingReviewData[choice.index].torrent_id,
     destination_override: choice.destination_override,
   }));

@@ -1189,6 +1189,7 @@ async def download_locked(req: DownloadRequest, info_hash: str | None, progress_
                 422,
                 "This release has no standalone video files (it may contain only a RAR/ZIP archive). Choose another release.",
             )
+        all_video_files = video_files
 
         if req.file_ids:
             wanted_file_ids = list(dict.fromkeys(req.file_ids))
@@ -1253,9 +1254,9 @@ async def download_locked(req: DownloadRequest, info_hash: str | None, progress_
                             if file_id in link_by_file_id]
             # Older/completed torrents may omit selection flags. If RD returns
             # one link per video file, the file list order still identifies it.
-            if not link_by_file_id and len(links) == len(video_files):
+            if not link_by_file_id and len(links) == len(all_video_files):
                 link_by_file_id = {
-                    int(file["id"]): link for file, link in zip(video_files, links)
+                    int(file["id"]): link for file, link in zip(all_video_files, links)
                 }
                 chosen_links = [link_by_file_id[file_id] for file_id in wanted_file_ids
                                 if file_id in link_by_file_id]
