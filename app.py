@@ -429,7 +429,7 @@ async def torrentio_streams(imdb_id: str, season: int, episode: int):
 
     results = []
     for stream in data.get("streams", []):
-        if not release_is_allowed(stream.get("name"), stream.get("title")):
+        if not TORBOX_API_KEY and not release_is_allowed(stream.get("name"), stream.get("title")):
             continue
         magnet = stream_to_magnet(stream)
         item = {
@@ -496,7 +496,7 @@ async def torrentio_movie_streams(imdb_id: str):
 
     results = []
     for stream in data.get("streams", []):
-        if not release_is_allowed(stream.get("name"), stream.get("title")):
+        if not TORBOX_API_KEY and not release_is_allowed(stream.get("name"), stream.get("title")):
             continue
         magnet = stream_to_magnet(stream)
         if not magnet:
@@ -910,7 +910,7 @@ async def discover_season(
                 return {
                     "episode": episode,
                     "title": video.get("name") or f"Episode {episode}",
-                    "choices": candidates[:2],
+                    "choices": candidates if TORBOX_API_KEY else candidates[:2],
                     "candidate_count": len(candidates),
                 }
             except HTTPException as exc:
@@ -931,6 +931,7 @@ async def discover_season(
         "series_title": series_title,
         "season": season,
         "episodes": episodes,
+        "show_all_seeds": bool(TORBOX_API_KEY),
         **catalog_series_match(series_title, season),
     }
 
@@ -956,6 +957,7 @@ async def discover_movie(imdb_id: str = Query(..., pattern=r"^tt\d+$")):
         "imdb_id": imdb_id,
         "movie_title": meta.get("name") or imdb_id,
         "streams": await torrentio_movie_streams(imdb_id),
+        "show_all_seeds": bool(TORBOX_API_KEY),
         "already_downloaded": catalog_movie_match(meta.get("name") or imdb_id),
     }
 

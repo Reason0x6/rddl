@@ -91,7 +91,7 @@ body{isolation:isolate}.float-spark{animation:spark-glow 3.4s ease-in-out infini
         <button class="button" id="tv-search" type="submit">Find episodes <span aria-hidden="true">→</span></button>
       </div>
       <div class="title-results" id="tv-title-results"></div>
-      <p class="help">Choose from the top two reported-seeder releases per episode. Downloads go to <code>TV / Show / S01</code>.</p>
+      <p class="help" id="tv-search-help">Choose from the top two reported-seeder releases per episode. Downloads go to <code>TV / Show / S01</code>.</p>
     </form>
   </section>
 
@@ -324,7 +324,12 @@ async function discoverSeason() {
         : '');
     document.getElementById('select-top-seeds').hidden = currentRole === 'requestor' || !episodeResults.some(item => item.choices?.length);
     document.getElementById('result-heading').textContent = `${data.series_title} · Season ${season}`;
-    document.getElementById('result-subtitle').textContent = 'Choose one of the two highest-seeder releases per episode';
+    document.getElementById('result-subtitle').textContent = data.show_all_seeds
+      ? 'All seed results shown, ranked by reported seeders'
+      : 'Choose one of the two highest-seeder releases per episode';
+    document.getElementById('tv-search-help').innerHTML = data.show_all_seeds
+      ? 'Showing all Torrentio seed results for each episode. Downloads go to <code>TV / Show / S01</code>.'
+      : 'Choose from the top two reported-seeder releases per episode. Downloads go to <code>TV / Show / S01</code>.';
     document.getElementById('result-count').textContent = `${episodeResults.length} episodes`;
     renderEpisodes(season);
     document.getElementById('movies').replaceChildren();
@@ -351,7 +356,9 @@ async function discoverMovie() {
     showLibraryNotice(data.already_downloaded ? `${movieTitle} is already in your Catalog. You can still download another copy.` : '');
     document.getElementById('select-top-seeds').hidden = true;
     document.getElementById('result-heading').textContent = data.movie_title;
-    document.getElementById('result-subtitle').textContent = 'Releases ranked by reported seeders';
+    document.getElementById('result-subtitle').textContent = data.show_all_seeds
+      ? 'All seed results shown, ranked by reported seeders'
+      : 'Releases ranked by reported seeders';
     document.getElementById('result-count').textContent = `${movieResults.length} releases`;
     renderMovies();
     document.getElementById('episodes').replaceChildren();
@@ -760,7 +767,10 @@ function renderEpisodes(season) {
     if (!item.choices?.length) {
       card.innerHTML = `<div class="episode-number">${escapeHtml(String(item.episode).padStart(2, '0'))}</div><div class="episode-main"><p class="episode-title">${escapeHtml(item.title)}</p><p class="release">${code}</p><div class="no-result">${escapeHtml(item.error || 'No Torrentio matches')}</div></div>`;
     } else {
-      const choices = item.choices.map((candidate, choiceIndex) => choiceMarkup(candidate, `tv:${item.episode}:${choiceIndex}`, choiceIndex ? 'Next best' : 'Top seed', 'episode-meta')).join('');
+      const choices = item.choices.map((candidate, choiceIndex) => {
+        const seedLabel = choiceIndex === 0 ? 'Top seed' : choiceIndex === 1 ? 'Next best' : `Seed #${choiceIndex + 1}`;
+        return choiceMarkup(candidate, `tv:${item.episode}:${choiceIndex}`, seedLabel, 'episode-meta');
+      }).join('');
       card.innerHTML = `<div class="episode-number">${String(item.episode).padStart(2, '0')}</div><div class="episode-main"><p class="episode-title">${escapeHtml(item.title)}</p><p class="release">${code}</p><div class="choice-list">${choices}</div></div>`;
       card.querySelectorAll('input[type=checkbox]').forEach((checkbox, choiceIndex) => {
         checkbox.addEventListener('change', () => toggleSelection(checkbox, {
