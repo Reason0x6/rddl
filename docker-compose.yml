@@ -5,6 +5,7 @@ services:
     restart: unless-stopped
     environment:
       REAL_DEBRID_TOKEN: ${REAL_DEBRID_TOKEN:-}
+      TORBOX_API_KEY: ${TORBOX_API_KEY:-}
       APP_USERNAME: ${APP_USERNAME:-admin}
       APP_PASSWORD: ${APP_PASSWORD:-}
       SESSION_SECRET: ${SESSION_SECRET:-}

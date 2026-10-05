@@ -64,7 +64,7 @@ body{isolation:isolate}.float-spark{animation:spark-glow 3.4s ease-in-out infini
   </div>
 
   <header class="hero">
-    <div class="hero-copy"><div class="eyebrow"><span class="eyebrow-dot"></span> YOUR LIBRARY, IN MOTION</div><h1>Find your next<br><span>great watch.</span></h1><p class="intro">Explore high-seed releases, organize your library, and send downloads to Real-Debrid in a few clicks.</p><div class="hero-actions"><button class="button outline" id="hero-browse" type="button">Browse releases <span aria-hidden="true">↗</span></button><button class="button outline secondary-outline" id="hero-catalog" type="button">Explore catalog</button></div><div class="hero-footnote"><span class="online-dot"></span> Your media library, all in one place</div></div>
+    <div class="hero-copy"><div class="eyebrow"><span class="eyebrow-dot"></span> YOUR LIBRARY, IN MOTION</div><h1>Find your next<br><span>great watch.</span></h1><p class="intro">Explore high-seed releases, organize your library, and send downloads to your debrid service in a few clicks.</p><div class="hero-actions"><button class="button outline" id="hero-browse" type="button">Browse releases <span aria-hidden="true">↗</span></button><button class="button outline secondary-outline" id="hero-catalog" type="button">Explore catalog</button></div><div class="hero-footnote"><span class="online-dot"></span> Your media library, all in one place</div></div>
     <div class="hero-art" aria-hidden="true">
       <div class="art-orbit orbit-one"></div><div class="art-orbit orbit-two"></div>
       <svg class="hero-object" viewBox="0 0 620 560" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -159,9 +159,21 @@ body{isolation:isolate}.float-spark{animation:spark-glow 3.4s ease-in-out infini
   <footer class="site-footer"><span>RD MEDIA <i>·</i> YOUR PERSONAL LIBRARY</span><nav><button type="button" data-footer-page="downloads">Downloader</button><button type="button" data-footer-page="requests">Requests</button><button type="button" data-footer-page="catalog">Catalog</button></nav><span class="footer-status"><i></i> PRIVATE MEDIA WORKSPACE</span></footer>
 </main>
 <aside class="selection-bar" id="selection-bar" hidden aria-live="polite">
-  <div class="selection-info"><div class="selection-title" id="selection-count">0 selected</div><div class="selection-detail" id="selection-detail">Choose releases to send to Real-Debrid</div></div>
-  <div class="selection-actions"><button class="button secondary small" id="clear-selection" type="button">Clear</button><button class="button small" id="send-selected" type="button">Send selected to RD</button></div>
+  <div class="selection-info"><div class="selection-title" id="selection-count">0 selected</div><div class="selection-detail" id="selection-detail">Choose releases to download</div></div>
+  <div class="selection-actions"><button class="button secondary small" id="clear-selection" type="button">Clear</button><button class="button small" id="send-selected" type="button">Send selected</button></div>
 </aside>
+<dialog id="provider-choice-dialog">
+  <div class="dialog-body">
+    <div class="eyebrow">DOWNLOAD SERVICE</div><h2>Choose a service</h2><p>Which service should handle this batch?</p>
+    <label><input type="radio" name="download-provider" value="real_debrid" checked> Real-Debrid</label>
+    <label><input type="radio" name="download-provider" value="torbox"> TorBox</label>
+    <div class="dialog-actions"><button class="button secondary small" id="provider-cancel" type="button">Cancel</button><button class="button small" id="provider-confirm" type="button">Continue</button></div>
+  </div>
+</dialog>
+<style>
+#provider-choice-dialog label{display:flex;align-items:center;gap:10px;margin-top:12px;padding:10px 12px;border:1px solid #ffffff18;border-radius:10px;color:#eee;background:#0d0e10;cursor:pointer}
+#provider-choice-dialog input[type=radio]{width:16px;height:16px;margin:0;accent-color:#ff792f}
+</style>
 <dialog id="download-review-dialog" class="download-review-dialog">
   <div class="dialog-body">
     <div class="eyebrow">FINAL CHECK</div><h2>Choose video files</h2><p>Review the video files Real-Debrid found for your selections.</p>
@@ -180,6 +192,8 @@ let movieTitle = '';
 let catalogRows = [];
 let selected = new Map();
 let currentJob = null;
+let downloadProviders = {real_debrid: false, torbox: false};
+let providerChoiceResolver = null;
 const activeBatches = new Set();
 let downloadHistoryTimer = null;
 let downloadHistoryLoading = false;
@@ -196,6 +210,15 @@ document.getElementById('tv-form').addEventListener('submit', event => { event.p
 document.getElementById('movie-form').addEventListener('submit', event => { event.preventDefault(); discoverMovie(); });
 document.getElementById('clear-selection').addEventListener('click', clearSelection);
 document.getElementById('send-selected').addEventListener('click', sendSelected);
+document.getElementById('provider-confirm').addEventListener('click', () => {
+  const provider = document.querySelector('input[name="download-provider"]:checked')?.value || null;
+  finishProviderChoice(provider);
+});
+document.getElementById('provider-cancel').addEventListener('click', () => finishProviderChoice(null));
+document.getElementById('provider-choice-dialog').addEventListener('cancel', event => {
+  event.preventDefault();
+  finishProviderChoice(null);
+});
 document.getElementById('review-cancel').addEventListener('click', () => finishDownloadReview(null));
 document.getElementById('review-confirm').addEventListener('click', confirmDownloadReview);
 document.getElementById('download-review-dialog').addEventListener('cancel', event => {
@@ -555,7 +578,7 @@ async function loadDownloadHistory() {
 }
 
 async function stopAllDownloads() {
-  if (!confirm('Stop all queued and active downloads? Partially downloaded local files will be removed. Existing torrents will remain in Real-Debrid.')) return;
+  if (!confirm('Stop all queued and active downloads? Partially downloaded local files will be removed. Torrents already added to your debrid account will remain there.')) return;
   const button = document.getElementById('stop-all-downloads');
   button.disabled = true;
   try {
@@ -828,27 +851,48 @@ function clearSelection() {
   updateSelectionBar();
 }
 
-function updateSelectionBar(detail = 'Choose releases to send to Real-Debrid') {
+function updateSelectionBar(detail = 'Choose releases to download') {
   const bar = document.getElementById('selection-bar');
   bar.hidden = currentRole === 'requestor' || selected.size === 0 && !currentJob;
   document.getElementById('selection-count').textContent = `${selected.size} selected`;
   document.getElementById('selection-detail').textContent = detail;
   const send = document.getElementById('send-selected');
   send.disabled = selected.size === 0 || Boolean(currentJob);
-  send.textContent = currentJob ? 'Sending…' : 'Send selected to RD';
+  const available = Object.entries(downloadProviders).filter(([, enabled]) => enabled).map(([name]) => name);
+  const providerLabel = available.length === 1 ? (available[0] === 'torbox' ? 'TorBox' : 'Real-Debrid') : '';
+  send.textContent = currentJob ? 'Sending…' : providerLabel ? `Send selected to ${providerLabel}` : 'Send selected';
 }
 
 async function sendSelected() {
   if (!selected.size || currentJob) return;
-  const payload = [...selected.values()].map(({display, ...download}) => ({...download, label: display}));
-  if (payload.length > 30) {
+  if (selected.size > 30) {
     setStatus('Send up to 30 releases at a time.', 'error');
     return;
   }
   currentJob = true;
-  updateSelectionBar(`Checking files for ${payload.length} release${payload.length === 1 ? '' : 's'}…`);
-  setStatus('Checking video files in the selected Real-Debrid torrents…');
+  updateSelectionBar('Choosing a download service…');
   try {
+    const sessionResponse = await fetch('/api/session');
+    const session = await sessionResponse.json();
+    if (!sessionResponse.ok) throw new Error(session.detail || 'Could not check download services.');
+    downloadProviders = session.providers || downloadProviders;
+    const available = Object.entries(downloadProviders).filter(([, enabled]) => enabled).map(([name]) => name);
+    if (!available.length) throw new Error('Configure REAL_DEBRID_TOKEN or TORBOX_API_KEY before downloading.');
+    let provider = available[0];
+    if (available.length > 1) {
+      provider = await chooseDownloadProvider();
+      if (!provider) {
+        currentJob = null;
+        updateSelectionBar();
+        return;
+      }
+    }
+    const providerLabel = provider === 'torbox' ? 'TorBox' : 'Real-Debrid';
+    const payload = [...selected.values()].map(({display, ...download}) => ({
+      ...download, label: display, provider,
+    }));
+    updateSelectionBar(`Checking files with ${providerLabel}…`);
+    setStatus(`Checking video files with ${providerLabel}…`);
     const inspectResponse = await fetch('/api/inspect-downloads', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({downloads:payload})});
     const inspected = await inspectResponse.json();
     if (!inspectResponse.ok) throw new Error(inspected.detail || 'Could not inspect selected torrents.');
@@ -860,18 +904,18 @@ async function sendSelected() {
       if (!readyPayload) {
         currentJob = null;
         updateSelectionBar();
-        setStatus('Review cancelled. No files were downloaded; checked torrents may remain in Real-Debrid.', '');
+        setStatus(`Review cancelled. No files were downloaded; checked torrents may remain in ${providerLabel}.`, '');
         return;
       }
     } else {
       readyPayload = payload.map((item, index) => ({
         ...item,
-        rd_torrent_id: reviews[index].torrent_id,
+        provider_torrent_id: reviews[index].torrent_id,
         file_ids: [reviews[index].files[0].id],
       }));
     }
     updateSelectionBar(`Starting ${readyPayload.length} downloads…`);
-    setStatus(`Sending ${readyPayload.length} selected file${readyPayload.length === 1 ? '' : 's'} to Real-Debrid…`);
+    setStatus(`Sending ${readyPayload.length} selected file${readyPayload.length === 1 ? '' : 's'} to ${providerLabel}…`);
     const response = await fetch('/api/download-batches', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({downloads:readyPayload})});
     const started = await response.json();
     if (!response.ok) throw new Error(started.detail || 'Could not start batch.');
@@ -892,8 +936,32 @@ async function sendSelected() {
   }
 }
 
+function chooseDownloadProvider() {
+  const dialog = document.getElementById('provider-choice-dialog');
+  document.querySelectorAll('input[name="download-provider"]').forEach(input => {
+    input.disabled = !downloadProviders[input.value];
+    input.closest('label').hidden = input.disabled;
+  });
+  const first = document.querySelector('input[name="download-provider"]:not(:disabled)');
+  if (first) first.checked = true;
+  return new Promise(resolve => {
+    providerChoiceResolver = resolve;
+    dialog.showModal();
+  });
+}
+
+function finishProviderChoice(provider) {
+  const dialog = document.getElementById('provider-choice-dialog');
+  if (dialog.open) dialog.close();
+  const resolve = providerChoiceResolver;
+  providerChoiceResolver = null;
+  resolve?.(provider);
+}
+
 function reviewDownloadFiles(requests, reviews) {
   const list = document.getElementById('review-download-list');
+  const providerLabel = requests[0]?.provider === 'torbox' ? 'TorBox' : 'Real-Debrid';
+  document.querySelector('#download-review-dialog .dialog-body > p').textContent = `Review the video files ${providerLabel} found for your selections.`;
   document.getElementById('review-error').hidden = true;
   list.innerHTML = reviews.map((review, index) => {
     const multi = review.files.length > 1;
@@ -971,7 +1039,7 @@ function finishDownloadReview(choices) {
   const ready = choices.map(choice => ({
     ...pendingReviewRequests[choice.index],
     file_ids: choice.file_ids,
-    rd_torrent_id: pendingReviewData[choice.index].torrent_id,
+    provider_torrent_id: pendingReviewData[choice.index].torrent_id,
     destination_override: choice.destination_override,
   }));
   pendingReviewRequests = null;
@@ -987,7 +1055,8 @@ async function pollBatch(jobId) {
     if (!response.ok) throw new Error(job.detail || 'Could not read batch progress.');
     updateDownloadStatuses(job.items);
     if (activeBatches.size === 1 && !currentJob) {
-      setStatus(`Real-Debrid batch: ${job.completed} complete, ${job.active} active, ${job.failed} failed.`);
+      const providerLabel = job.items[0]?.provider === 'torbox' ? 'TorBox' : 'Real-Debrid';
+      setStatus(`${providerLabel} batch: ${job.completed} complete, ${job.active} active, ${job.failed} failed.`);
     }
     if (job.status === 'complete') {
       const failed = job.items.filter(item => item.status === 'failed');
@@ -1054,6 +1123,8 @@ function escapeHtml(value) { return String(value).replace(/[&<>"']/g, char => ({
 
 fetch('/api/session').then(response => response.json()).then(session => {
   currentRole = session.role || 'admin';
+  downloadProviders = session.providers || downloadProviders;
+  updateSelectionBar();
   if (currentRole === 'requestor') {
     showPage('requests');
   } else {

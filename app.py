@@ -21,7 +21,9 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field, field_validator
 
 RD_BASE = "https://api.real-debrid.com/rest/1.0"
+TORBOX_BASE = "https://api.torbox.app/v1/api"
 TOKEN = os.environ.get("REAL_DEBRID_TOKEN")
+TORBOX_API_KEY = os.environ.get("TORBOX_API_KEY")
 ROOT = Path(os.environ.get("DOWNLOAD_ROOT", "/media"))
 POLL = int(os.environ.get("POLL_SECONDS", "10"))
 TORRENTIO_URL = os.environ.get("TORRENTIO_URL", "").rstrip("/")
@@ -257,6 +259,8 @@ class DownloadRequest(BaseModel):
     rd_torrent_id: str | None = Field(default=None, max_length=100)
     file_ids: list[int] | None = Field(default=None, max_length=200)
     destination_override: str | None = Field(default=None, max_length=500)
+    provider: Literal["real_debrid", "torbox"] = "real_debrid"
+    provider_torrent_id: str | None = Field(default=None, max_length=100)
 
 
 class DownloadBatchRequest(BaseModel):
@@ -533,7 +537,8 @@ async def downloader_app(request: Request):
 @app.get("/api/session")
 async def get_session(request: Request):
     return {"authenticated": bool(request.state.username), "username": request.state.username,
-            "role": request.state.role}
+            "role": request.state.role,
+            "providers": {"real_debrid": bool(TOKEN), "torbox": bool(TORBOX_API_KEY)}}
 
 
 @app.post("/api/login")
@@ -998,6 +1003,177 @@ async def rd_get(client, path, params=None):
     return await rd_request(client, "GET", path, params=params)
 
 
+async def torbox_request(client, method, path, data=None, params=None):
+    for attempt in range(1, RD_REQUEST_ATTEMPTS + 1):
+        try:
+            response = await client.request(
+                method, TORBOX_BASE + path,
+                headers={"Authorization": f"Bearer {TORBOX_API_KEY}"},
+                data=data, params=params,
+            )
+        except httpx.RequestError as exc:
+            if attempt == RD_REQUEST_ATTEMPTS:
+                raise HTTPException(502, "TorBox request failed after retries") from exc
+            await asyncio.sleep(attempt)
+            continue
+        if response.status_code >= 400:
+            if (response.status_code in RETRYABLE_HTTP_STATUSES or response.status_code >= 500) and attempt < RD_REQUEST_ATTEMPTS:
+                await asyncio.sleep(attempt)
+                continue
+            try:
+                body = response.json()
+                detail = body.get("detail") or body.get("error") or response.text[:500]
+            except ValueError:
+                detail = response.text[:500]
+            raise HTTPException(response.status_code, f"TorBox error: {detail}")
+        try:
+            result = response.json()
+        except ValueError as exc:
+            raise HTTPException(502, "TorBox returned an invalid response") from exc
+        if isinstance(result, dict) and result.get("success") is False:
+            raise HTTPException(502, result.get("detail") or result.get("error") or "TorBox request failed")
+        return result
+
+
+def torbox_data(payload):
+    if isinstance(payload, dict) and "data" in payload:
+        return payload.get("data")
+    return payload
+
+
+def provider_is_configured(provider: str) -> bool:
+    return bool(TORBOX_API_KEY) if provider == "torbox" else bool(TOKEN)
+
+
+def require_provider(provider: str):
+    if not provider_is_configured(provider):
+        env_name = "TORBOX_API_KEY" if provider == "torbox" else "REAL_DEBRID_TOKEN"
+        raise HTTPException(503, f"{env_name} is not configured")
+
+
+def torbox_torrent_items(payload):
+    data = torbox_data(payload)
+    if isinstance(data, dict):
+        for key in ("torrents", "items", "list"):
+            if isinstance(data.get(key), list):
+                return data[key]
+        return [data]
+    return data if isinstance(data, list) else []
+
+
+def normalize_torbox_torrent(raw):
+    files = []
+    raw_files = raw.get("files") or raw.get("file_list") or []
+    if isinstance(raw_files, dict):
+        raw_files = list(raw_files.values())
+    for index, entry in enumerate(raw_files):
+        if isinstance(entry, str):
+            path, file_id, size = entry, index, None
+        elif isinstance(entry, dict):
+            path = entry.get("path") or entry.get("name") or entry.get("short_name") or entry.get("filename") or ""
+            file_id = entry.get("id", entry.get("file_id", entry.get("index", index)))
+            size = entry.get("size", entry.get("bytes"))
+        else:
+            continue
+        try:
+            file_id = int(file_id)
+        except (TypeError, ValueError):
+            continue
+        files.append({"id": file_id, "path": str(path), "bytes": size, "selected": 1})
+    state = str(raw.get("download_state") or raw.get("status") or "unknown")
+    progress = raw.get("progress", raw.get("download_percent"))
+    try:
+        if progress is not None and float(progress) <= 1:
+            progress = float(progress) * 100
+    except (TypeError, ValueError):
+        progress = None
+    ready_states = {"cached", "completed", "complete", "seeding", "uploading"}
+    try:
+        is_complete = progress is not None and float(progress) >= 100
+    except (TypeError, ValueError):
+        is_complete = False
+    status = "downloaded" if state.lower() in ready_states or is_complete else state
+    return {
+        **raw,
+        "id": str(raw.get("id") or raw.get("torrent_id") or ""),
+        "hash": str(raw.get("hash") or raw.get("info_hash") or "").lower(),
+        "status": status,
+        "progress": progress,
+        "files": files,
+    }
+
+
+async def torbox_get_torrent(client, torrent_id):
+    payload = await torbox_request(
+        client, "GET", "/torrents/mylist",
+        params={"id": torrent_id, "bypass_cache": "true"},
+    )
+    items = torbox_torrent_items(payload)
+    if not items:
+        raise HTTPException(404, "TorBox torrent was not found in your account")
+    return normalize_torbox_torrent(items[0])
+
+
+async def find_existing_torbox_torrent(client, info_hash):
+    if not info_hash:
+        return None
+    payload = await torbox_request(
+        client, "GET", "/torrents/mylist",
+        params={"limit": 1000, "bypass_cache": "true"},
+    )
+    for item in torbox_torrent_items(payload):
+        torrent = normalize_torbox_torrent(item)
+        if torrent["hash"] == info_hash:
+            return torrent
+    return None
+
+
+async def torbox_torrent_details(client, req, info_hash, progress_callback=None):
+    existing = None
+    if req.provider_torrent_id:
+        torrent_id = req.provider_torrent_id
+        raw = await torbox_get_torrent(client, torrent_id)
+        if info_hash and raw.get("hash") and raw["hash"] != info_hash:
+            raise HTTPException(422, "Prepared TorBox torrent does not match this release")
+        existing = {"id": torrent_id, "status": raw.get("status")}
+    else:
+        torrent = await find_existing_torbox_torrent(client, info_hash)
+        if torrent:
+            torrent_id = torrent["id"]
+            existing = {"id": torrent_id, "status": torrent.get("status")}
+            raw = torrent
+        else:
+            if progress_callback:
+                progress_callback("Adding magnet to TorBox", 0, "Waiting for torrent details")
+            payload = await torbox_request(
+                client, "POST", "/torrents/createtorrent",
+                data={"magnet": req.magnet, "allow_zip": "false"},
+            )
+            data = torbox_data(payload)
+            torrent_id = str(data.get("torrent_id") or data.get("id")) if isinstance(data, dict) else str(data)
+            if not torrent_id or torrent_id == "None":
+                raise HTTPException(502, "TorBox accepted the magnet but returned no torrent ID")
+            raw = None
+            logger.info("TorBox accepted new torrent torrent_id=%s hash=%s", torrent_id, info_hash)
+
+    for _ in range(180):
+        if raw is None or not raw.get("files"):
+            raw = await torbox_get_torrent(client, torrent_id)
+        if raw.get("files"):
+            if progress_callback:
+                progress_callback("TorBox torrent details ready", raw.get("progress"),
+                                  f"{len(raw['files'])} files found")
+            return existing, torrent_id, raw
+        if str(raw.get("download_state") or raw.get("status") or "").lower() in {"error", "failed", "dead"}:
+            raise HTTPException(502, f"TorBox torrent failed: {raw.get('download_state') or raw.get('status')}")
+        if progress_callback:
+            progress_callback("Waiting for TorBox file details", raw.get("progress"),
+                              f"TorBox status: {raw.get('download_state') or raw.get('status') or 'checking'}")
+        await asyncio.sleep(POLL)
+        raw = None
+    raise HTTPException(504, "TorBox did not expose torrent files")
+
+
 async def download_direct_link(client, url, target, progress_callback=None):
     if progress_callback:
         progress_callback("Downloading video file", 0, f"{target.name} · starting")
@@ -1089,8 +1265,12 @@ download_locks = {}
 
 async def torrent_details(client, req: DownloadRequest, info_hash: str | None,
                           progress_callback=None):
-    if req.rd_torrent_id:
-        torrent_id = req.rd_torrent_id
+    if req.provider == "torbox":
+        if not TORBOX_API_KEY:
+            raise HTTPException(503, "TORBOX_API_KEY is not configured")
+        return await torbox_torrent_details(client, req, info_hash, progress_callback)
+    if req.provider_torrent_id or req.rd_torrent_id:
+        torrent_id = req.provider_torrent_id or req.rd_torrent_id
         info = (await rd_get(client, f"/torrents/info/{torrent_id}")).json()
         remote_hash = str(info.get("hash") or "").lower()
         if info_hash and remote_hash and remote_hash != info_hash:
@@ -1131,15 +1311,15 @@ async def torrent_details(client, req: DownloadRequest, info_hash: str | None,
 
 @app.post("/api/inspect-downloads")
 async def inspect_downloads(batch: DownloadBatchRequest):
-    if not TOKEN:
-        raise HTTPException(503, "REAL_DEBRID_TOKEN is not configured")
     semaphore = asyncio.Semaphore(3)
 
     async def inspect_one(req: DownloadRequest):
+        require_provider(req.provider)
         if not release_is_allowed(req.release_name):
             raise HTTPException(422, "This release name is blocked by the configured source/codec rules")
         info_hash = magnet_info_hash(req.magnet)
-        lock = download_locks.setdefault(info_hash, asyncio.Lock()) if info_hash else asyncio.Lock()
+        lock_key = f"{req.provider}:{info_hash}" if info_hash else None
+        lock = download_locks.setdefault(lock_key, asyncio.Lock()) if lock_key else asyncio.Lock()
         async with semaphore, lock:
             async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
                 _, torrent_id, info = await torrent_details(client, req, info_hash)
@@ -1172,6 +1352,7 @@ async def inspect_downloads(batch: DownloadBatchRequest):
             "season": req.season,
             "episode": req.episode,
             "torrent_id": torrent_id,
+            "provider": req.provider,
             "default_destination": str(download_target_dir(req)),
             "files": videos,
         }
@@ -1181,34 +1362,99 @@ async def inspect_downloads(batch: DownloadBatchRequest):
 
 @app.post("/api/download")
 async def download(req: DownloadRequest, progress_callback=None):
-    """Download a magnet, reusing an existing Real-Debrid torrent when possible."""
+    """Download a magnet using the selected configured provider."""
+    require_provider(req.provider)
     if not release_is_allowed(req.release_name):
         raise HTTPException(422, "This release name is blocked by the configured source/codec rules")
     info_hash = magnet_info_hash(req.magnet)
     if not info_hash:
         return await download_locked(req, info_hash, progress_callback)
-    lock = download_locks.setdefault(info_hash, asyncio.Lock())
+    lock_key = f"{req.provider}:{info_hash}"
+    lock = download_locks.setdefault(lock_key, asyncio.Lock())
     async with lock:
         return await download_locked(req, info_hash, progress_callback)
 
 
+async def download_torbox_files(client, req, torrent_id, video_files,
+                                wanted_file_ids, target_dir, progress_callback=None):
+    last_state = None
+    for _ in range(720):
+        torrent = await torbox_get_torrent(client, torrent_id)
+        state = str(torrent.get("status") or "unknown")
+        if progress_callback:
+            progress_callback(f"TorBox: {state.replace('_', ' ').capitalize()}",
+                              torrent.get("progress"), f"TorBox status: {state}")
+        if state == "downloaded":
+            break
+        if state.lower() in {"error", "failed", "dead", "stalled (no seeds)"}:
+            raise HTTPException(502, f"TorBox torrent failed: {state}")
+        if state != last_state:
+            logger.info("TorBox status changed torrent_id=%s status=%s", torrent_id, state)
+            last_state = state
+        await asyncio.sleep(POLL)
+    else:
+        raise HTTPException(504, "Timed out waiting for TorBox")
+
+    available = {int(file["id"]): file for file in torrent["files"]}
+    wanted = [available[file_id] for file_id in wanted_file_ids if file_id in available]
+    if len(wanted) != len(wanted_file_ids):
+        raise HTTPException(422, "A selected TorBox file is no longer available")
+
+    target_dir.mkdir(parents=True, exist_ok=True)
+    downloaded = []
+    for file in wanted:
+        file_label = str(file.get("path") or file.get("name") or f"file {file['id']}")
+        filename = safe_name(Path(file_label).name)
+        target = target_dir / filename
+        if target.exists():
+            downloaded.append(str(target))
+            continue
+        if progress_callback:
+            progress_callback("Preparing TorBox file", 0, f"{file_label} · requesting download link")
+        payload = await torbox_request(
+            client, "GET", "/torrents/requestdl",
+            params={"torrent_id": torrent_id, "file_id": file["id"],
+                    "token": TORBOX_API_KEY, "redirect": "false"},
+        )
+        direct = torbox_data(payload)
+        if isinstance(direct, dict):
+            direct = direct.get("download") or direct.get("url") or direct.get("link")
+        if not isinstance(direct, str) or not direct.startswith(("http://", "https://")):
+            raise HTTPException(502, f"TorBox returned no download link for file '{file_label}'")
+        try:
+            await download_direct_link(client, direct, target, progress_callback)
+        except HTTPException as exc:
+            raise HTTPException(exc.status_code, f"TorBox failed downloading file '{file_label}': {exc.detail}") from exc
+        downloaded.append(str(target))
+    return {
+        "torrent_id": torrent_id,
+        "provider": "torbox",
+        "status": "downloaded",
+        "destination": str(target_dir),
+        "files": downloaded,
+        "warnings": [],
+    }
+
+
 async def download_locked(req: DownloadRequest, info_hash: str | None, progress_callback=None):
     """Download a magnet explicitly supplied by the user."""
-    if not TOKEN:
-        raise HTTPException(503, "REAL_DEBRID_TOKEN is not configured")
+    require_provider(req.provider)
 
-    logger.info("download started media_type=%s title=%r", req.media_type, req.title)
+    logger.info("download started provider=%s media_type=%s title=%r",
+                req.provider, req.media_type, req.title)
     if progress_callback:
-        progress_callback("Checking Real-Debrid", None, "Looking for an existing torrent")
+        service = "TorBox" if req.provider == "torbox" else "Real-Debrid"
+        progress_callback(f"Checking {service}", None, "Looking for an existing torrent")
 
     async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
         existing, torrent_id, info = await torrent_details(client, req, info_hash, progress_callback)
         if existing:
-            logger.info("reusing existing RD torrent torrent_id=%s hash=%s status=%s",
-                        torrent_id, info_hash, existing.get("status"))
+            service = "TorBox" if req.provider == "torbox" else "Real-Debrid"
+            logger.info("reusing existing %s torrent torrent_id=%s hash=%s status=%s",
+                        service, torrent_id, info_hash, existing.get("status"))
             if progress_callback:
                 progress_callback("Reusing existing torrent", existing.get("progress"),
-                                  f"Real-Debrid status: {existing.get('status', 'unknown')}")
+                                  f"{service} status: {existing.get('status', 'unknown')}")
 
         # Real-Debrid exposes torrent contents as individual files. Select only
         # playable video files so archives, samples, subtitles, and metadata
@@ -1240,6 +1486,18 @@ async def download_locked(req: DownloadRequest, info_hash: str | None, progress_
             raise HTTPException(409, "This torrent has multiple video files; inspect it and choose one first")
         else:
             wanted_file_ids = [int(file["id"]) for file in video_files]
+
+        if req.provider == "torbox":
+            target_dir = download_target_dir(req)
+            destination_root = ROOT / ("TV" if req.media_type == "tv" else "Movies")
+            destination_root.mkdir(parents=True, exist_ok=True)
+            result = await download_torbox_files(
+                client, req, torrent_id, video_files, wanted_file_ids,
+                target_dir, progress_callback,
+            )
+            logger.info("TorBox download complete torrent_id=%s destination=%s files=%s",
+                        torrent_id, target_dir, len(result["files"]))
+            return result
 
         file_ids = ",".join(str(f["id"]) for f in video_files)
         if progress_callback:
@@ -1446,7 +1704,8 @@ async def run_download_job(job_id: str, requests: list[DownloadRequest]):
             item["status"] = "downloading"
             item["stage"] = "Starting download"
             item["progress"] = 0
-            item["detail"] = "Preparing Real-Debrid request"
+            service = "TorBox" if request.provider == "torbox" else "Real-Debrid"
+            item["detail"] = f"Preparing {service} request"
             save_download_job(job_id)
             logger.info("batch item started job_id=%s item=%s title=%r",
                         job_id, index + 1, request.label or request.title)
@@ -1495,9 +1754,8 @@ async def run_download_job(job_id: str, requests: list[DownloadRequest]):
 
 @app.post("/api/download-batches", status_code=202)
 async def create_download_batch(batch: DownloadBatchRequest):
-    if not TOKEN:
-        raise HTTPException(503, "REAL_DEBRID_TOKEN is not configured")
     for request in batch.downloads:
+        require_provider(request.provider)
         download_target_dir(request)
 
     job_id = uuid.uuid4().hex
@@ -1514,6 +1772,7 @@ async def create_download_batch(batch: DownloadBatchRequest):
             {
                 "index": i,
                 "title": item.label or item.title or f"Selection {i + 1}",
+                "provider": item.provider,
                 "selection_key": item.selection_key,
                 "status": "queued",
                 "stage": "Queued",
