@@ -18,7 +18,7 @@ from urllib.parse import quote, urlsplit
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 RD_BASE = "https://api.real-debrid.com/rest/1.0"
 TOKEN = os.environ.get("REAL_DEBRID_TOKEN")
@@ -163,8 +163,12 @@ def init_request_db():
             season INTEGER,
             requested_by TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'requested',
+            magnet TEXT,
             created_at TEXT NOT NULL
         )""")
+        columns = {row[1] for row in db.execute("PRAGMA table_info(requests)")}
+        if "magnet" not in columns:
+            db.execute("ALTER TABLE requests ADD COLUMN magnet TEXT")
         db.execute("CREATE INDEX IF NOT EXISTS request_status_idx ON requests(status, created_at)")
 
 
@@ -279,6 +283,18 @@ class MediaRequestInput(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     year: str | None = Field(default=None, max_length=20)
     season: int | None = Field(default=None, ge=1, le=100)
+    magnet: str | None = Field(default=None, max_length=5000)
+
+    @field_validator("magnet")
+    @classmethod
+    def validate_magnet(cls, value: str | None):
+        if value is not None:
+            value = value.strip()
+            if not value:
+                return None
+            if not value.lower().startswith("magnet:?") or not magnet_info_hash(value):
+                raise ValueError("Enter a valid BitTorrent magnet link")
+        return value
 
 
 class RequestStatusInput(BaseModel):
@@ -659,15 +675,15 @@ def request_row(row):
     return {
         "id": row[0], "media_type": row[1], "imdb_id": row[2], "title": row[3],
         "year": row[4], "season": row[5], "requested_by": row[6],
-        "status": row[7], "created_at": row[8],
+        "status": row[7], "magnet": row[8], "created_at": row[9],
     }
 
 
 @app.get("/api/requests")
-async def list_requests():
+async def list_requests(request: Request):
     with sqlite3.connect(REQUEST_DB) as db:
         rows = db.execute(
-            "SELECT id, media_type, imdb_id, title, year, season, requested_by, status, created_at "
+            "SELECT id, media_type, imdb_id, title, year, season, requested_by, status, magnet, created_at "
             "FROM requests ORDER BY id DESC LIMIT 300"
         ).fetchall()
     requests = []
@@ -683,6 +699,8 @@ async def list_requests():
                 f"S{item['season']:02d}" in item["downloaded_seasons"]
                 if item["season"] else bool(item["downloaded_seasons"])
             )
+        if request.state.role != "admin":
+            item.pop("magnet", None)
         requests.append(item)
     return {"requests": requests}
 
@@ -699,14 +717,15 @@ async def create_media_request(payload: MediaRequestInput, request: Request):
         if existing:
             raise HTTPException(409, "That title is already in the request queue")
         cursor = db.execute(
-            "INSERT INTO requests (media_type, imdb_id, title, year, season, requested_by, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO requests (media_type, imdb_id, title, year, season, requested_by, magnet, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (payload.media_type, payload.imdb_id, payload.title, payload.year, season,
-             request.state.username, time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())),
+             request.state.username, payload.magnet,
+             time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())),
         )
         request_id = cursor.lastrowid
         row = db.execute(
-            "SELECT id, media_type, imdb_id, title, year, season, requested_by, status, created_at "
+            "SELECT id, media_type, imdb_id, title, year, season, requested_by, status, magnet, created_at "
             "FROM requests WHERE id=?", (request_id,),
         ).fetchone()
     return {"request": request_row(row)}
@@ -720,7 +739,7 @@ async def update_media_request(request_id: int, payload: RequestStatusInput):
         if not cursor.rowcount:
             raise HTTPException(404, "Request not found")
         row = db.execute(
-            "SELECT id, media_type, imdb_id, title, year, season, requested_by, status, created_at "
+            "SELECT id, media_type, imdb_id, title, year, season, requested_by, status, magnet, created_at "
             "FROM requests WHERE id=?", (request_id,),
         ).fetchone()
     return {"request": request_row(row)}
@@ -1127,9 +1146,9 @@ async def inspect_downloads(batch: DownloadBatchRequest):
             coordinates = episode_coordinates(Path(path).name)
             season, episode = coordinates if coordinates else (None, None)
             mismatch = (
-                req.media_type == "tv" and req.season is not None and req.episode is not None
+                req.media_type == "tv" and req.season is not None
                 and coordinates is not None
-                and (season != req.season or episode != req.episode)
+                and (season != req.season or (req.episode is not None and episode != req.episode))
             )
             videos.append({
                 "id": int(file["id"]),
@@ -1264,6 +1283,10 @@ async def download_locked(req: DownloadRequest, info_hash: str | None, progress_
             link_by_file_id = {
                 int(file["id"]): link for file, link in zip(selected_in_rd, links)
             }
+            file_name_by_link = {
+                link: str(file.get("path") or file.get("filename") or "selected file")
+                for file, link in zip(selected_in_rd, links)
+            }
             chosen_links = [link_by_file_id[file_id] for file_id in wanted_file_ids
                             if file_id in link_by_file_id]
             # Older/completed torrents may omit selection flags. If RD returns
@@ -1272,12 +1295,19 @@ async def download_locked(req: DownloadRequest, info_hash: str | None, progress_
                 link_by_file_id = {
                     int(file["id"]): link for file, link in zip(all_video_files, links)
                 }
+                file_name_by_link = {
+                    link: str(file.get("path") or file.get("filename") or "selected file")
+                    for file, link in zip(all_video_files, links)
+                }
                 chosen_links = [link_by_file_id[file_id] for file_id in wanted_file_ids
                                 if file_id in link_by_file_id]
             if chosen_links:
                 links = chosen_links
             elif len(wanted_file_ids) == 1 and len(links) == 1:
                 links = links[:1]
+                file_name_by_link = {
+                    links[0]: str(video_files[0].get("path") or video_files[0].get("filename") or "selected file")
+                }
             else:
                 raise HTTPException(409, "Real-Debrid did not return the selected video file")
 
@@ -1289,6 +1319,7 @@ async def download_locked(req: DownloadRequest, info_hash: str | None, progress_
         downloaded = []
         skipped_links = []
         for link in links:
+            file_label = file_name_by_link.get(link, "selected video file")
             if progress_callback:
                 progress_callback("Preparing video file", 0, "Getting a direct download link")
             try:
@@ -1296,11 +1327,16 @@ async def download_locked(req: DownloadRequest, info_hash: str | None, progress_
             except HTTPException as exc:
                 error_detail = str(exc.detail).lower()
                 if "infringing_file" in error_detail or "error_code\": 35" in error_detail:
-                    logger.warning("Real-Debrid rejected one file as infringing torrent_id=%s",
-                                   torrent_id)
-                    skipped_links.append("Real-Debrid blocked one file; other files were kept")
+                    warning = f"Real-Debrid rejected file '{file_label}' (infringing_file)"
+                    logger.warning("%s torrent_id=%s", warning, torrent_id)
+                    skipped_links.append(warning)
                     continue
-                raise
+                if exc.status_code == 403:
+                    warning = f"Real-Debrid returned HTTP 403 for file '{file_label}'"
+                    logger.warning("%s torrent_id=%s", warning, torrent_id)
+                    skipped_links.append(warning)
+                    continue
+                raise HTTPException(exc.status_code, f"Failed for file '{file_label}': {exc.detail}") from exc
             payload = rr.json()
             direct = payload.get("download")
             if not direct:
@@ -1319,12 +1355,17 @@ async def download_locked(req: DownloadRequest, info_hash: str | None, progress_
                 downloaded.append(str(target))
                 continue
 
-            await download_direct_link(client, direct, target, progress_callback)
+            try:
+                await download_direct_link(client, direct, target, progress_callback)
+            except HTTPException as exc:
+                if exc.status_code == 403:
+                    raise HTTPException(403, f"HTTP 403 while downloading file '{file_label}'") from exc
+                raise HTTPException(exc.status_code, f"Failed downloading file '{file_label}': {exc.detail}") from exc
 
             downloaded.append(str(target))
 
         if skipped_links and not downloaded:
-            raise HTTPException(502, "Real-Debrid blocked all selected files as infringing")
+            raise HTTPException(502, "; ".join(skipped_links))
 
         result = {
             "torrent_id": torrent_id,

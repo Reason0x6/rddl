@@ -115,6 +115,7 @@ body{isolation:isolate}.float-spark{animation:spark-glow 3.4s ease-in-out infini
         <label id="request-season-label" hidden>Season (optional)<input id="request-season" type="number" min="1" max="100" placeholder="All seasons"></label>
         <button class="button" id="request-search-button" type="submit">Search</button>
       </div>
+      <label style="margin-top:14px">Magnet link (optional)<input id="request-magnet" type="text" placeholder="magnet:?xt=urn:btih:…" autocomplete="off" spellcheck="false"></label>
       <p class="help">For a TV show, leave season blank to request the whole series.</p>
     </form>
     <div class="title-results" id="title-results"></div>
@@ -417,11 +418,13 @@ async function submitMediaRequest(title) {
         title: title.title,
         year: title.year || null,
         season,
+        magnet: document.getElementById('request-magnet').value.trim() || null,
       }),
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || 'Could not add request.');
     setStatus(`Added ${title.title} to the request queue.`, 'success');
+    document.getElementById('request-magnet').value = '';
     await loadRequests();
   } catch (error) {
     setStatus(error.message || 'Could not add request.', 'error');
@@ -626,15 +629,49 @@ function renderRequests(requests) {
     const libraryState = item.media_type === 'movie'
       ? (item.downloaded ? 'Downloaded' : '')
       : (item.downloaded_seasons?.length ? `In library · ${item.downloaded_seasons.join(', ')}` : '');
-    card.innerHTML = `<div class="request-copy"><strong>${escapeHtml(item.title)}${item.year ? ` (${escapeHtml(item.year)})` : ''}</strong><p>${type}${season} · IMDb ${escapeHtml(item.imdb_id)} · Requested ${escapeHtml(requested)}</p>${libraryState ? `<span class="request-library-state">${escapeHtml(libraryState)}</span>` : ''}${currentRole === 'admin' ? '<button class="button secondary small" type="button">Find releases</button>' : ''}</div><span class="request-state ${escapeHtml(item.status)}">${escapeHtml(item.status)}</span>${currentRole === 'admin' ? `<label class="status-control">Status<select data-request-status="${item.id}"><option value="requested">Requested</option><option value="downloading">Downloading</option><option value="completed">Completed</option><option value="declined">Declined</option></select></label>` : ''}`;
+    const requestActions = currentRole === 'admin'
+      ? `<button class="button secondary small" type="button" data-find-releases>Find releases</button>${item.magnet ? '<button class="button secondary small" type="button" data-download-magnet>Download supplied magnet</button>' : ''}`
+      : '';
+    const magnetNote = item.magnet ? '<p class="request-magnet-note">Magnet link supplied</p>' : '';
+    card.innerHTML = `<div class="request-copy"><strong>${escapeHtml(item.title)}${item.year ? ` (${escapeHtml(item.year)})` : ''}</strong><p>${type}${season} · IMDb ${escapeHtml(item.imdb_id)} · Requested ${escapeHtml(requested)}</p>${libraryState ? `<span class="request-library-state">${escapeHtml(libraryState)}</span>` : ''}${magnetNote}${requestActions}</div><span class="request-state ${escapeHtml(item.status)}">${escapeHtml(item.status)}</span>${currentRole === 'admin' ? `<label class="status-control">Status<select data-request-status="${item.id}"><option value="requested">Requested</option><option value="downloading">Downloading</option><option value="completed">Completed</option><option value="declined">Declined</option></select></label>` : ''}`;
     if (currentRole === 'admin') {
-      card.querySelector('.button').addEventListener('click', () => openRequestInDownloader(item));
+      card.querySelector('[data-find-releases]').addEventListener('click', () => openRequestInDownloader(item));
+      card.querySelector('[data-download-magnet]')?.addEventListener('click', () => downloadRequestMagnet(item));
       const select = card.querySelector('select');
       select.value = item.status;
       select.addEventListener('change', () => updateRequestStatus(item.id, select.value));
     }
     list.append(card);
   });
+}
+
+async function downloadRequestMagnet(item) {
+  if (currentJob || !item.magnet) return;
+  let season = item.season;
+  if (item.media_type === 'series' && !season) {
+    const answer = prompt('Which season folder should this magnet use?', '1');
+    if (answer === null) return;
+    season = Number(answer);
+    if (!Number.isInteger(season) || season < 1 || season > 100) {
+      setStatus('Enter a season number from 1 to 100.', 'error');
+      return;
+    }
+  }
+  clearSelection();
+  const key = `request-magnet:${item.id}:${Date.now()}`;
+  const mediaType = item.media_type === 'series' ? 'tv' : 'movies';
+  selected.set(key, {
+    selection_key: key,
+    magnet: item.magnet,
+    media_type: mediaType,
+    title: item.title,
+    season: mediaType === 'tv' ? season : null,
+    release_name: `User supplied magnet for ${item.title}`,
+    display: `${item.title}${season ? ` · S${String(season).padStart(2, '0')}` : ''} · supplied magnet`,
+  });
+  showPage('downloads');
+  updateSelectionBar('Review the files in this supplied magnet before downloading');
+  await sendSelected();
 }
 
 function openRequestInDownloader(item) {
@@ -856,7 +893,7 @@ function reviewDownloadFiles(requests, reviews) {
         ? `S${String(file.season).padStart(2, '0')}E${String(file.episode).padStart(2, '0')}` : '';
       return `<label class="review-file-choice"><input type="checkbox" data-file-review="${index}" value="${file.id}" data-path="${escapeHtml(file.path)}" data-mismatch="${file.mismatch}" data-season="${file.season || ''}" data-episode="${file.episode || ''}" ${!multi ? 'checked disabled' : ''}><strong>${escapeHtml(file.path)}</strong><span>${seasonEpisode ? `${seasonEpisode} · ` : ''}${formatFileSize(file.size)}</span></label>`;
     }).join('');
-    const mismatchBlock = requests[index].media_type === 'tv' && requests[index].episode
+    const mismatchBlock = requests[index].media_type === 'tv' && requests[index].season
       ? `<div class="review-mismatch" data-review-mismatch="${index}" hidden><p></p><label class="review-destination">Save to a different folder (optional)<input type="text" data-destination-override="${index}" autocomplete="off" placeholder="For example: TV/Show/S01/Other folder"><span class="help">Enter a path under /media, or leave blank for the requested season folder.</span></label></div>`
       : '';
     return `<article class="review-release" data-review-release="${index}" data-expected-season="${requests[index].season || ''}" data-expected-episode="${requests[index].episode || ''}"><div class="review-release-head"><strong>${escapeHtml(review.title)}</strong><span>${multi ? `${review.files.length} video files · select one or more` : 'One video file found'}</span></div><div class="review-file-choices">${choices}</div>${mismatchBlock}<div class="review-default-destination">Default save folder: ${escapeHtml(review.default_destination)}</div></article>`;
@@ -884,7 +921,9 @@ function updateReviewMismatch(checkbox) {
   const mismatches = [...release.querySelectorAll('input[data-file-review]:checked[data-mismatch="true"]')];
   block.hidden = mismatches.length === 0;
   if (mismatches.length) {
-    const expected = `S${String(release.dataset.expectedSeason).padStart(2, '0')}E${String(release.dataset.expectedEpisode).padStart(2, '0')}`;
+    const expectedSeason = `S${String(release.dataset.expectedSeason).padStart(2, '0')}`;
+    const expected = release.dataset.expectedEpisode
+      ? `${expectedSeason}E${String(release.dataset.expectedEpisode).padStart(2, '0')}` : expectedSeason;
     const actual = mismatches.map(file => `${file.dataset.path} (S${String(file.dataset.season).padStart(2, '0')}E${String(file.dataset.episode).padStart(2, '0')})`).join(', ');
     block.querySelector('p').textContent = `These selected files do not match the requested ${expected}: ${actual}. Choose a different save folder if you prefer; otherwise they will use the requested season folder.`;
   }
@@ -943,13 +982,17 @@ async function pollBatch(jobId) {
     if (job.status === 'complete') {
       const failed = job.items.filter(item => item.status === 'failed');
       const cancelled = job.items.filter(item => item.status === 'cancelled');
+      const fileWarnings = job.items.flatMap(item => item.warnings || []);
       currentJob = null;
       clearSelection();
       setStatus(failed.length
         ? `Batch finished: ${job.completed} complete, ${failed.length} failed. ${failed.map(item => `${item.title}: ${item.error}`).join(' · ')}`
         : cancelled.length
           ? `Batch stopped: ${job.completed} complete, ${cancelled.length} stopped.`
-          : `Batch finished. ${job.completed} release${job.completed === 1 ? '' : 's'} downloaded to your library.`, failed.length ? 'error' : 'success');
+          : fileWarnings.length
+            ? `Batch finished with file errors: ${fileWarnings.join(' · ')}`
+          : `Batch finished. ${job.completed} release${job.completed === 1 ? '' : 's'} downloaded to your library.`,
+        failed.length || fileWarnings.length ? 'error' : 'success');
       return;
     }
   }
@@ -965,6 +1008,8 @@ function updateDownloadStatuses(items) {
     const labels = {queued: 'Queued', downloading: 'Downloading', complete: 'Complete', failed: 'Failed', cancelled: 'Stopped'};
     badge.textContent = item.status === 'failed' && item.error
       ? `Failed: ${item.error}`
+      : item.warnings?.length
+        ? `${labels[item.status] || item.status}: ${item.warnings.join('; ')}`
       : (labels[item.status] || item.status);
   }
 }
