@@ -1009,9 +1009,33 @@ async function pollBatch(jobId) {
 }
 
 function updateDownloadStatuses(items) {
+  let selectionChanged = false;
   for (const item of items) {
     if (!item.selection_key) continue;
     const badge = document.querySelector(`[data-download-status="${item.selection_key}"]`);
+    const fileIssue = [item.error, ...(item.warnings || [])].find(message =>
+      typeof message === 'string' && /infringing_file|error_code["'\s:]+35/i.test(message));
+    if (fileIssue) {
+      const match = fileIssue.match(/(?:rejected file|for file) ['"](.+?)['"](?: \(|$)/i);
+      const filename = match?.[1] || 'selected video file';
+      const issueText = `Unavailable: ${filename} · choose another seed`;
+      const checkbox = [...document.querySelectorAll('input[type=checkbox][data-key]')]
+        .find(input => input.dataset.key === item.selection_key);
+      if (checkbox) {
+        checkbox.disabled = true;
+        if (checkbox.checked) {
+          checkbox.checked = false;
+          selectionChanged = true;
+        }
+        selected.delete(item.selection_key);
+      }
+      if (badge) {
+        badge.hidden = false;
+        badge.className = 'download-status failed';
+        badge.textContent = issueText;
+      }
+      continue;
+    }
     if (!badge) continue;
     badge.hidden = false;
     badge.className = `download-status ${item.status}`;
@@ -1022,6 +1046,7 @@ function updateDownloadStatuses(items) {
         ? `${labels[item.status] || item.status}: ${item.warnings.join('; ')}`
       : (labels[item.status] || item.status);
   }
+  if (selectionChanged) updateSelectionBar();
 }
 
 function setStatus(message, kind = '') { statusEl.textContent = message; statusEl.className = `status ${kind}`; }
