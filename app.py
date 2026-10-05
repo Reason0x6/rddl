@@ -1315,7 +1315,7 @@ async def inspect_downloads(batch: DownloadBatchRequest):
 
     async def inspect_one(req: DownloadRequest):
         require_provider(req.provider)
-        if not release_is_allowed(req.release_name):
+        if req.provider == "real_debrid" and not release_is_allowed(req.release_name):
             raise HTTPException(422, "This release name is blocked by the configured source/codec rules")
         info_hash = magnet_info_hash(req.magnet)
         lock_key = f"{req.provider}:{info_hash}" if info_hash else None
@@ -1364,7 +1364,7 @@ async def inspect_downloads(batch: DownloadBatchRequest):
 async def download(req: DownloadRequest, progress_callback=None):
     """Download a magnet using the selected configured provider."""
     require_provider(req.provider)
-    if not release_is_allowed(req.release_name):
+    if req.provider == "real_debrid" and not release_is_allowed(req.release_name):
         raise HTTPException(422, "This release name is blocked by the configured source/codec rules")
     info_hash = magnet_info_hash(req.magnet)
     if not info_hash:
