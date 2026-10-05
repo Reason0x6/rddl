@@ -520,6 +520,11 @@ async def torrentio_movie_streams(imdb_id: str):
 
 @app.get("/")
 async def index(request: Request):
+    return FileResponse("/app/static/landing.html", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/app")
+async def downloader_app(request: Request):
     if not request.state.username:
         return FileResponse("/app/static/login.html", headers={"Cache-Control": "no-store"})
     return FileResponse("/app/static/index.html", headers={"Cache-Control": "no-store"})

@@ -180,6 +180,7 @@ let movieTitle = '';
 let catalogRows = [];
 let selected = new Map();
 let currentJob = null;
+const activeBatches = new Set();
 let downloadHistoryTimer = null;
 let downloadHistoryLoading = false;
 let pendingReviewResolver = null;
@@ -874,8 +875,16 @@ async function sendSelected() {
     const response = await fetch('/api/download-batches', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({downloads:readyPayload})});
     const started = await response.json();
     if (!response.ok) throw new Error(started.detail || 'Could not start batch.');
+    const jobId = started.job_id;
+    currentJob = null;
+    clearSelection();
+    activeBatches.add(jobId);
+    updateSelectionBar('Batch submitted. You can choose and submit another.');
+    pollBatch(jobId).catch(error => {
+      activeBatches.delete(jobId);
+      if (!activeBatches.size) setStatus(error.message || 'Could not track download progress.', 'error');
+    });
     await loadDownloadHistory();
-    await pollBatch(started.job_id);
   } catch (error) {
     currentJob = null;
     updateSelectionBar();
@@ -977,14 +986,15 @@ async function pollBatch(jobId) {
     const job = await response.json();
     if (!response.ok) throw new Error(job.detail || 'Could not read batch progress.');
     updateDownloadStatuses(job.items);
-    updateSelectionBar(`${job.completed} complete · ${job.active} active · ${job.failed} failed of ${job.total}`);
-    setStatus(`Real-Debrid batch: ${job.completed} complete, ${job.active} active, ${job.failed} failed.`);
+    if (activeBatches.size === 1 && !currentJob) {
+      setStatus(`Real-Debrid batch: ${job.completed} complete, ${job.active} active, ${job.failed} failed.`);
+    }
     if (job.status === 'complete') {
       const failed = job.items.filter(item => item.status === 'failed');
       const cancelled = job.items.filter(item => item.status === 'cancelled');
       const fileWarnings = job.items.flatMap(item => item.warnings || []);
-      currentJob = null;
-      clearSelection();
+      activeBatches.delete(jobId);
+      if (activeBatches.size || currentJob) return;
       setStatus(failed.length
         ? `Batch finished: ${job.completed} complete, ${failed.length} failed. ${failed.map(item => `${item.title}: ${item.error}`).join(' · ')}`
         : cancelled.length
