@@ -48,6 +48,11 @@ body{isolation:isolate}.float-spark{animation:spark-glow 3.4s ease-in-out infini
 .review-error{margin:0 0 10px;padding:9px 11px;border:1px solid #b54a36;border-radius:9px;color:#ffab95;background:#29120e;font-size:12px}
 .request-library-state{display:inline-flex;margin-top:7px;padding:3px 9px;border:1px solid #78b79544;border-radius:99px;color:#a1d9b6;background:#111c17;font-size:11px;font-weight:650}
 </style>
+<style>
+.tv-search-actions{display:flex;gap:8px;align-items:center}.tv-search-actions .button{white-space:nowrap}
+.complete-series-badge{display:inline-flex;margin-top:8px}
+@media(max-width:650px){.tv-search-actions{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr}.tv-search-actions .button{width:100%;white-space:normal}}
+</style>
 </head>
 <body>
 <main class="shell">
@@ -88,7 +93,7 @@ body{isolation:isolate}.float-spark{animation:spark-glow 3.4s ease-in-out infini
       <div class="fields">
         <label>Series title or IMDb ID<input id="tv-imdb" placeholder="Search title or enter tt0185906" autocomplete="off" required></label>
         <label>Season<input id="season" type="number" min="1" max="100" value="1" required></label>
-        <button class="button" id="tv-search" type="submit">Find episodes <span aria-hidden="true">→</span></button>
+        <div class="tv-search-actions"><button class="button" id="tv-search" type="submit">Find episodes <span aria-hidden="true">→</span></button><button class="button secondary" id="complete-series-search" type="button">Find complete show</button></div>
       </div>
       <div class="title-results" id="tv-title-results"></div>
       <p class="help" id="tv-search-help">Choose from the top two reported-seeder releases per episode. Downloads go to <code>TV / Show / S01</code>.</p>
@@ -207,6 +212,7 @@ let currentRole = 'admin';
 document.getElementById('tv-tab').addEventListener('click', () => selectPanel('tv'));
 document.getElementById('movie-tab').addEventListener('click', () => selectPanel('movie'));
 document.getElementById('tv-form').addEventListener('submit', event => { event.preventDefault(); discoverSeason(); });
+document.getElementById('complete-series-search').addEventListener('click', discoverCompleteSeries);
 document.getElementById('movie-form').addEventListener('submit', event => { event.preventDefault(); discoverMovie(); });
 document.getElementById('clear-selection').addEventListener('click', clearSelection);
 document.getElementById('send-selected').addEventListener('click', sendSelected);
@@ -362,6 +368,33 @@ async function discoverMovie() {
     setStatus(movieResults.length ? `Found ${movieResults.length} releases.` : 'No movie releases found.', movieResults.length ? 'success' : '');
   } catch (error) { setStatus(error.message || 'Movie search failed.', 'error'); }
   finally { endSearch(button, 'Find releases'); }
+}
+
+async function discoverCompleteSeries() {
+  const imdb = await resolveDownloaderQuery('tv');
+  if (!imdb) return;
+  const button = document.getElementById('complete-series-search');
+  beginSearch(button, 'Searching for complete series…', 'Searching…');
+  try {
+    const response = await fetch(`/api/discover-complete-series?imdb_id=${encodeURIComponent(imdb)}`);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || 'Complete show search failed.');
+    clearSelection();
+    seriesTitle = data.series_title;
+    movieResults = data.streams;
+    showLibraryNotice('');
+    document.getElementById('select-top-seeds').hidden = true;
+    document.getElementById('result-heading').textContent = `${seriesTitle} · Complete show`;
+    document.getElementById('result-subtitle').textContent = 'Ranked by reported seeders; matching packs are marked as including the entire show';
+    document.getElementById('result-count').textContent = `${movieResults.length} complete show${movieResults.length === 1 ? '' : 's'} found`;
+    renderCompleteSeries();
+    document.getElementById('episodes').replaceChildren();
+    document.getElementById('episodes').hidden = true;
+    document.getElementById('movies').hidden = false;
+    resultsSection.hidden = false;
+    setStatus(movieResults.length ? `Found ${movieResults.length} complete-show candidate${movieResults.length === 1 ? '' : 's'} across ${data.seasons_checked} season${data.seasons_checked === 1 ? '' : 's'}.` : 'No results clearly identified as a complete show.', movieResults.length ? 'success' : '');
+  } catch (error) { setStatus(error.message || 'Complete show search failed.', 'error'); }
+  finally { endSearch(button, 'Find complete show'); }
 }
 
 async function resolveDownloaderQuery(media) {
@@ -804,6 +837,29 @@ function renderMovies() {
   });
 }
 
+function renderCompleteSeries() {
+  const list = document.getElementById('movies');
+  list.replaceChildren();
+  if (!movieResults.length) {
+    list.innerHTML = '<div class="empty"><strong>No complete-show packs found</strong>Try again later or use a regular season search.</div>';
+    return;
+  }
+  movieResults.forEach((item, index) => {
+    const card = document.createElement('article');
+    card.className = 'movie';
+    card.innerHTML = `<div class="movie-number">${String(index + 1).padStart(2, '0')}</div><div class="movie-main">${choiceMarkup(item, `complete:${index}`, 'Select show', 'movie-meta')}<span class="badge complete-series-badge">Includes entire show</span></div>`;
+    card.querySelector('input[type=checkbox]').addEventListener('change', event => toggleSelection(event.currentTarget, {
+      magnet: item.magnet,
+      media_type: 'tv',
+      title: seriesTitle,
+      release_name: item.title || item.name || `Complete series pack ${index + 1}`,
+      display: `${seriesTitle} · Complete show · ${item.title || item.name || `Release ${index + 1}`}`,
+      complete_series: true,
+    }));
+    list.append(card);
+  });
+}
+
 function choiceMarkup(item, key, label, metaClass) {
   const seedBadge = item.seeders < 0 ? '<span class="badge neutral">Seeds unavailable</span>' : `<span class="badge">${item.seeders.toLocaleString()} seeds</span>`;
   const resolution = item.resolution ? `<span class="badge neutral">${escapeHtml(item.resolution)}</span>` : '';
@@ -972,12 +1028,16 @@ function reviewDownloadFiles(requests, reviews) {
     const choices = review.files.map(file => {
       const seasonEpisode = file.season && file.episode
         ? `S${String(file.season).padStart(2, '0')}E${String(file.episode).padStart(2, '0')}` : '';
-      return `<label class="review-file-choice"><input type="checkbox" data-file-review="${index}" value="${file.id}" data-path="${escapeHtml(file.path)}" data-mismatch="${file.mismatch}" data-season="${file.season || ''}" data-episode="${file.episode || ''}" ${!multi ? 'checked disabled' : ''}><strong>${escapeHtml(file.path)}</strong><span>${seasonEpisode ? `${seasonEpisode} · ` : ''}${formatFileSize(file.size)}</span></label>`;
+      const checked = !multi || requests[index].complete_series;
+      return `<label class="review-file-choice"><input type="checkbox" data-file-review="${index}" value="${file.id}" data-path="${escapeHtml(file.path)}" data-mismatch="${file.mismatch}" data-season="${file.season || ''}" data-episode="${file.episode || ''}" ${checked ? 'checked' : ''} ${!multi ? 'disabled' : ''}><strong>${escapeHtml(file.path)}</strong><span>${seasonEpisode ? `${seasonEpisode} · ` : ''}${formatFileSize(file.size)}</span></label>`;
     }).join('');
     const mismatchBlock = requests[index].media_type === 'tv' && requests[index].season
       ? `<div class="review-mismatch" data-review-mismatch="${index}" hidden><p></p><label class="review-destination">Save to a different folder (optional)<input type="text" data-destination-override="${index}" autocomplete="off" placeholder="For example: TV/Show/S01/Other folder"><span class="help">Enter a path under /media, or leave blank for the requested season folder.</span></label></div>`
       : '';
-    return `<article class="review-release" data-review-release="${index}" data-expected-season="${requests[index].season || ''}" data-expected-episode="${requests[index].episode || ''}"><div class="review-release-head"><strong>${escapeHtml(review.title)}</strong><span>${multi ? `${review.files.length} video files · select one or more` : 'One video file found'}</span></div><div class="review-file-choices">${choices}</div>${mismatchBlock}<div class="review-default-destination">Default save folder: ${escapeHtml(review.default_destination)}</div></article>`;
+    const selectionHint = requests[index].complete_series
+      ? `${review.files.length} video files · entire show selected`
+      : multi ? `${review.files.length} video files · select one or more` : 'One video file found';
+    return `<article class="review-release" data-review-release="${index}" data-expected-season="${requests[index].season || ''}" data-expected-episode="${requests[index].episode || ''}"><div class="review-release-head"><strong>${escapeHtml(review.title)}</strong><span>${selectionHint}</span></div><div class="review-file-choices">${choices}</div>${mismatchBlock}<div class="review-default-destination">Default save folder: ${escapeHtml(review.default_destination)}</div></article>`;
   }).join('');
   reviews.forEach((review, index) => {
     if (review.files.length === 1) {

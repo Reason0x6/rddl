@@ -231,7 +231,8 @@ async def require_login(request: Request, call_next):
         return JSONResponse({"detail": "Login required"}, status_code=401)
     requestor_routes = {
         "/api/session", "/api/logout", "/api/title-search", "/api/requests",
-        "/api/discover", "/api/discover-season", "/api/discover-movie", "/api/catalog",
+        "/api/discover", "/api/discover-season", "/api/discover-movie",
+        "/api/discover-complete-series", "/api/catalog",
     }
     if username and request.state.role == "requestor" and request.url.path.startswith("/api/"):
         allowed = request.url.path in requestor_routes
@@ -261,6 +262,7 @@ class DownloadRequest(BaseModel):
     destination_override: str | None = Field(default=None, max_length=500)
     provider: Literal["real_debrid", "torbox"] = "real_debrid"
     provider_torrent_id: str | None = Field(default=None, max_length=100)
+    complete_series: bool = False
 
 
 class DownloadBatchRequest(BaseModel):
@@ -326,6 +328,8 @@ def download_target_dir(req: DownloadRequest) -> Path:
         return candidate
     destination_root = ROOT / ("TV" if req.media_type == "tv" else "Movies")
     if req.media_type == "tv":
+        if req.complete_series:
+            return destination_root / safe_name(req.title or "Unknown show")
         if req.season is None:
             raise HTTPException(422, "Season is required for TV downloads")
         return destination_root / safe_name(req.title or "Unknown show") / f"S{req.season:02d}"
@@ -339,6 +343,30 @@ def episode_coordinates(filename: str) -> tuple[int, int] | None:
     if not match:
         match = re.search(r"(?<!\d)(\d{1,2})x(\d{1,3})(?!\d)", filename, re.I)
     return (int(match.group(1)), int(match.group(2))) if match else None
+
+
+def complete_series_release(stream: dict, total_seasons: int) -> bool:
+    title = " ".join(str(stream.get(key) or "") for key in ("name", "title", "description"))
+    if re.search(r"\b(?:complete|full)\s+(?:the\s+)?(?:series|show)\b|\b(?:all|every)\s+seasons\b|\bseries\s+(?:collection|pack)\b", title, re.I):
+        return True
+    if total_seasons == 1 and re.search(r"\bcomplete\s+season\b", title, re.I):
+        return True
+    season_range = re.search(
+        r"\b(?:s|season\s*)(0?\d{1,2})\s*(?:-|–|to)\s*(?:s|season\s*)?(0?\d{1,2})\b",
+        title, re.I,
+    )
+    if season_range:
+        first, last = map(int, season_range.groups())
+        return first <= 1 and last >= total_seasons
+    return False
+
+
+def download_file_target_dir(req: DownloadRequest, base_dir: Path, file_path: str) -> Path:
+    if req.complete_series:
+        coordinates = episode_coordinates(Path(file_path).name)
+        if coordinates:
+            return base_dir / f"S{coordinates[0]:02d}"
+    return base_dir
 
 
 def rd_headers():
@@ -935,6 +963,55 @@ async def discover_season(
     }
 
 
+@app.get("/api/discover-complete-series")
+async def discover_complete_series(imdb_id: str = Query(..., pattern=r"^tt\d+$")):
+    """Find ranked Torrentio results that appear to contain a full series."""
+    meta = await season_metadata(imdb_id)
+    first_episode_by_season = {}
+    for video in meta.get("videos", []):
+        season_number = video.get("season")
+        episode = video.get("episode", video.get("number"))
+        if isinstance(season_number, int) and season_number > 0 and isinstance(episode, int) and episode > 0:
+            first_episode_by_season[season_number] = min(
+                episode, first_episode_by_season.get(season_number, episode)
+            )
+    if not first_episode_by_season:
+        raise HTTPException(404, "No episodes found for this IMDb ID")
+
+    total_seasons = max(first_episode_by_season)
+    semaphore = asyncio.Semaphore(4)
+
+    async def season_streams(season_number, episode_number):
+        async with semaphore:
+            try:
+                return await torrentio_streams(imdb_id, season_number, episode_number)
+            except HTTPException as exc:
+                logger.info("complete-series lookup failed imdb_id=%s season=%s err=%s",
+                            imdb_id, season_number, exc.detail)
+                return []
+
+    responses = await asyncio.gather(*(
+        season_streams(season_number, episode_number)
+        for season_number, episode_number in sorted(first_episode_by_season.items())
+    ))
+    candidates = {}
+    for streams in responses:
+        for stream in streams:
+            if not complete_series_release(stream, total_seasons):
+                continue
+            key = magnet_info_hash(stream["magnet"]) or stream["magnet"]
+            current = candidates.get(key)
+            if current is None or stream["seeders"] > current["seeders"]:
+                candidates[key] = {**stream, "includes_entire_show": True}
+    results = sorted(candidates.values(), key=lambda item: item["seeders"], reverse=True)
+    return {
+        "imdb_id": imdb_id,
+        "series_title": meta.get("name") or imdb_id,
+        "seasons_checked": len(first_episode_by_season),
+        "streams": results,
+    }
+
+
 @app.get("/api/discover-movie")
 async def discover_movie(imdb_id: str = Query(..., pattern=r"^tt\d+$")):
     """Return movie candidates ranked by reported seeders."""
@@ -1405,7 +1482,9 @@ async def download_torbox_files(client, req, torrent_id, video_files,
     for file in wanted:
         file_label = str(file.get("path") or file.get("name") or f"file {file['id']}")
         filename = safe_name(Path(file_label).name)
-        target = target_dir / filename
+        file_target_dir = download_file_target_dir(req, target_dir, file_label)
+        file_target_dir.mkdir(parents=True, exist_ok=True)
+        target = file_target_dir / filename
         if target.exists():
             downloaded.append(str(target))
             continue
@@ -1482,7 +1561,7 @@ async def download_locked(req: DownloadRequest, info_hash: str | None, progress_
             if not wanted_file_id_set.issubset(available_file_ids):
                 raise HTTPException(422, "One of the selected video files is no longer available")
             video_files = [file for file in video_files if int(file["id"]) in wanted_file_id_set]
-        elif len(video_files) > 1:
+        elif len(video_files) > 1 and not req.complete_series:
             raise HTTPException(409, "This torrent has multiple video files; inspect it and choose one first")
         else:
             wanted_file_ids = [int(file["id"]) for file in video_files]
@@ -1612,7 +1691,9 @@ async def download_locked(req: DownloadRequest, info_hash: str | None, progress_
                 continue
 
             filename = safe_name(raw_filename)
-            target = target_dir / filename
+            file_target_dir = download_file_target_dir(req, target_dir, file_label)
+            file_target_dir.mkdir(parents=True, exist_ok=True)
+            target = file_target_dir / filename
 
             if target.exists():
                 downloaded.append(str(target))
