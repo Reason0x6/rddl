@@ -324,12 +324,8 @@ async function discoverSeason() {
         : '');
     document.getElementById('select-top-seeds').hidden = currentRole === 'requestor' || !episodeResults.some(item => item.choices?.length);
     document.getElementById('result-heading').textContent = `${data.series_title} · Season ${season}`;
-    document.getElementById('result-subtitle').textContent = data.show_all_seeds
-      ? 'All seed results shown, ranked by reported seeders'
-      : 'Choose one of the two highest-seeder releases per episode';
-    document.getElementById('tv-search-help').innerHTML = data.show_all_seeds
-      ? 'Showing all Torrentio seed results for each episode. Downloads go to <code>TV / Show / S01</code>.'
-      : 'Choose from the top two reported-seeder releases per episode. Downloads go to <code>TV / Show / S01</code>.';
+    document.getElementById('result-subtitle').textContent = 'Choose one of the two highest-seeder releases per episode';
+    document.getElementById('tv-search-help').innerHTML = 'Choose from the top two reported-seeder releases per episode. Downloads go to <code>TV / Show / S01</code>.';
     document.getElementById('result-count').textContent = `${episodeResults.length} episodes`;
     renderEpisodes(season);
     document.getElementById('movies').replaceChildren();
@@ -356,9 +352,7 @@ async function discoverMovie() {
     showLibraryNotice(data.already_downloaded ? `${movieTitle} is already in your Catalog. You can still download another copy.` : '');
     document.getElementById('select-top-seeds').hidden = true;
     document.getElementById('result-heading').textContent = data.movie_title;
-    document.getElementById('result-subtitle').textContent = data.show_all_seeds
-      ? 'All seed results shown, ranked by reported seeders'
-      : 'Releases ranked by reported seeders';
+    document.getElementById('result-subtitle').textContent = 'Releases ranked by reported seeders';
     document.getElementById('result-count').textContent = `${movieResults.length} releases`;
     renderMovies();
     document.getElementById('episodes').replaceChildren();

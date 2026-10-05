@@ -910,7 +910,7 @@ async def discover_season(
                 return {
                     "episode": episode,
                     "title": video.get("name") or f"Episode {episode}",
-                    "choices": candidates if TORBOX_API_KEY else candidates[:2],
+                    "choices": candidates[:2],
                     "candidate_count": len(candidates),
                 }
             except HTTPException as exc:
@@ -931,7 +931,6 @@ async def discover_season(
         "series_title": series_title,
         "season": season,
         "episodes": episodes,
-        "show_all_seeds": bool(TORBOX_API_KEY),
         **catalog_series_match(series_title, season),
     }
 
@@ -957,7 +956,6 @@ async def discover_movie(imdb_id: str = Query(..., pattern=r"^tt\d+$")):
         "imdb_id": imdb_id,
         "movie_title": meta.get("name") or imdb_id,
         "streams": await torrentio_movie_streams(imdb_id),
-        "show_all_seeds": bool(TORBOX_API_KEY),
         "already_downloaded": catalog_movie_match(meta.get("name") or imdb_id),
     }
 
